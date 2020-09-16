@@ -184,12 +184,8 @@ bool ask_to_continue_unverified(Device* device) {
 }
 
 bool ask_to_continue_downgrade(Device* device) {
-  if (get_build_type() == "user") {
-    return false;
-  } else {
-    device->GetUI()->SetProgressType(RecoveryUI::EMPTY);
-    return yes_no(device, "This package will downgrade your system", "Install anyway?");
-  }
+  device->GetUI()->SetProgressType(RecoveryUI::EMPTY);
+  return yes_no(device, "This package will downgrade your system", "Install anyway?");
 }
 
 bool ask_to_continue_spl_downgrade(Device* device) {
