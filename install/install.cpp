@@ -423,20 +423,6 @@ static InstallResult TryUpdateBinary(Package* package, bool* wipe_cache,
   bool device_supports_virtual_ab = android::base::GetBoolProperty("ro.virtual_ab.enabled", false);
 
   bool spl_downgrade_approved = false;
-  const auto allow_spl_downgrade =
-      android::base::GetBoolProperty("persist.vendor.recovery_allow_spl_downgrade", false);
-  const auto current_spl = android::base::GetProperty("ro.build.version.security_patch", "");
-  if (ViolatesSPLDowngrade(zip, current_spl)) {
-    if (!allow_spl_downgrade || !ui->IsTextVisible()) {
-      LOG(ERROR) << "Denying OTA because it's SPL downgrade";
-      return INSTALL_ERROR;
-    }
-    if (!ask_to_continue_spl_downgrade(device)) {
-      LOG(ERROR) << "User denied SPL downgrade";
-      return INSTALL_ERROR;
-    }
-    spl_downgrade_approved = true;
-  }
 
   static bool ab_package_installed = false;
   if (ab_package_installed) {
