@@ -826,7 +826,6 @@ bool SetupPackageMount(const std::string& package_path, bool* should_use_fuse) {
       LOG(ERROR) << "Failed to mount " << block_map_path;
       return false;
     }
-
     if (!CheckPathCanonical(block_map_path)) {
       LOG(ERROR) << "Block map path " << package_path << " not canonical, abort installation.";
       return false;
