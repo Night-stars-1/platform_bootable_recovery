@@ -325,9 +325,11 @@ static void CreateMinadbdServiceAndExecuteCommands(
   if (ui->IsTextVisible()) {
     std::vector<std::string> headers{ rescue_mode ? "Rescue mode" : "ADB Sideload" };
     std::vector<std::string> entries{ "Cancel" };
+    ui->SetMenuItemsVisible(false);
     size_t chosen_item = ui->ShowMenu(
         headers, entries, 0, true,
         std::bind(&Device::HandleMenuKey, device, std::placeholders::_1, std::placeholders::_2));
+    ui->SetMenuItemsVisible(true);
 
     if (chosen_item != Device::kDoSideload) {
       // Kill minadbd if 'cancel' was selected, to abort sideload.

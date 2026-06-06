@@ -27,44 +27,72 @@
 #include "otautil/boot_state.h"
 #include "recovery_ui/ui.h"
 
-typedef std::pair<std::string, Device::BuiltinAction> menu_action_t;
+struct menu_action_t {
+  std::string label;
+  Device::BuiltinAction action;
+  std::string icon;
+};
 
 static std::vector<std::string> g_main_header{};
 static std::vector<menu_action_t> g_main_actions{
-  { "Reboot system now", Device::REBOOT },
-  { "Apply update", Device::APPLY_UPDATE },
-  { "Factory reset", Device::MENU_WIPE },
-  { "Advanced", Device::MENU_ADVANCED },
+  { "Reboot system now", Device::REBOOT, "" },
+  { "Apply update", Device::APPLY_UPDATE, "" },
+  { "Factory reset", Device::MENU_WIPE, "" },
+  { "Advanced", Device::MENU_ADVANCED, "" },
+  { "Switch to card home", Device::MENU_CARD_HOME, "" },
 };
 
 static std::vector<std::string> g_advanced_header{ "Advanced options" };
 static std::vector<menu_action_t> g_advanced_actions{
-  { "Enter fastboot", Device::ENTER_FASTBOOT },
-  { "Reboot to bootloader", Device::REBOOT_BOOTLOADER },
-  { "Reboot to recovery", Device::REBOOT_RECOVERY },
-  { "Mount/unmount system", Device::MOUNT_SYSTEM },
-  { "View recovery logs", Device::VIEW_RECOVERY_LOGS },
-  { "Enable ADB", Device::ENABLE_ADB },
-  { "Run graphics test", Device::RUN_GRAPHICS_TEST },
-  { "Run locale test", Device::RUN_LOCALE_TEST },
-  { "Enter rescue", Device::ENTER_RESCUE },
-  { "Power off", Device::SHUTDOWN },
+  { "Enter fastboot", Device::ENTER_FASTBOOT, "" },
+  { "Reboot to bootloader", Device::REBOOT_BOOTLOADER, "" },
+  { "Reboot to recovery", Device::REBOOT_RECOVERY, "" },
+  { "Mount/unmount system", Device::MOUNT_SYSTEM, "" },
+  { "View recovery logs", Device::VIEW_RECOVERY_LOGS, "" },
+  { "Enable ADB", Device::ENABLE_ADB, "" },
+  { "Run graphics test", Device::RUN_GRAPHICS_TEST, "" },
+  { "Run locale test", Device::RUN_LOCALE_TEST, "" },
+  { "Enter rescue", Device::ENTER_RESCUE, "" },
+  { "Power off", Device::SHUTDOWN, "" },
+};
+
+static std::vector<std::string> g_card_home_header{};
+static std::vector<menu_action_t> g_card_home_actions{
+  { "Apply update", Device::APPLY_UPDATE, "card_home_install" },
+  { "Factory reset", Device::MENU_WIPE, "card_home_erase" },
+  { "Advanced", Device::MENU_ADVANCED, "card_home_advanced" },
+  { "Power", Device::MENU_CARD_POWER, "card_home_power" },
+  { "Old UI", Device::MENU_TEXT_HOME, "card_home_old_ui" },
+};
+
+static std::vector<std::string> g_card_power_header{};
+static std::vector<menu_action_t> g_card_power_actions{
+  { "Reboot system now", Device::REBOOT, "card_power_system" },
+  { "Reboot to recovery", Device::REBOOT_RECOVERY, "card_power_recovery" },
+  { "Reboot to bootloader", Device::REBOOT_BOOTLOADER, "card_power_bootloader" },
+  { "Enter fastboot", Device::ENTER_FASTBOOT, "card_power_fastbootd" },
+  { "Power off", Device::SHUTDOWN, "card_power_off" },
 };
 
 static std::vector<std::string> g_wipe_header{ "Factory reset" };
 static std::vector<menu_action_t> g_wipe_actions{
-  { "Format data/factory reset", Device::WIPE_DATA },
-  { "Format cache partition", Device::WIPE_CACHE },
-  { "Format system partition", Device::WIPE_SYSTEM },
+  { "Format data/factory reset", Device::WIPE_DATA, "" },
+  { "Format cache partition", Device::WIPE_CACHE, "" },
+  { "Format system partition", Device::WIPE_SYSTEM, "" },
 };
 
 static std::vector<menu_action_t>* current_menu_ = &g_main_actions;
+static std::vector<menu_action_t>* return_menu_ = &g_main_actions;
 static std::vector<std::string> g_menu_items;
+static std::vector<std::string> g_menu_icons;
 
 static void PopulateMenuItems() {
   g_menu_items.clear();
+  g_menu_icons.clear();
   std::transform(current_menu_->cbegin(), current_menu_->cend(), std::back_inserter(g_menu_items),
-                 [](const auto& entry) { return entry.first; });
+                 [](const auto& entry) { return entry.label; });
+  std::transform(current_menu_->cbegin(), current_menu_->cend(), std::back_inserter(g_menu_icons),
+                 [](const auto& entry) { return entry.icon; });
 }
 
 Device::Device(RecoveryUI* ui) : ui_(ui) {
@@ -81,19 +109,36 @@ void Device::ResetUI(RecoveryUI* ui) {
 
 void Device::GoHome() {
   current_menu_ = &g_main_actions;
+  return_menu_ = &g_main_actions;
+  PopulateMenuItems();
+}
+
+void Device::GoBack() {
+  if (current_menu_ == &g_card_power_actions) {
+    current_menu_ = &g_card_home_actions;
+  } else if (current_menu_ == &g_card_home_actions) {
+    current_menu_ = &g_main_actions;
+  } else {
+    current_menu_ = return_menu_;
+  }
+  if (current_menu_ == &g_main_actions) {
+    return_menu_ = &g_main_actions;
+  }
   PopulateMenuItems();
 }
 
 static void RemoveMenuItemForAction(std::vector<menu_action_t>& menu, Device::BuiltinAction action) {
   menu.erase(
       std::remove_if(menu.begin(), menu.end(),
-                     [action](const auto& entry) { return entry.second == action; }), menu.end());
+                     [action](const auto& entry) { return entry.action == action; }), menu.end());
   CHECK(!menu.empty());
 }
 
 void Device::RemoveMenuItemForAction(Device::BuiltinAction action) {
   ::RemoveMenuItemForAction(g_wipe_actions, action);
   ::RemoveMenuItemForAction(g_advanced_actions, action);
+  ::RemoveMenuItemForAction(g_card_home_actions, action);
+  ::RemoveMenuItemForAction(g_card_power_actions, action);
 }
 
 const std::vector<std::string>& Device::GetMenuItems() {
@@ -105,22 +150,62 @@ const std::vector<std::string>& Device::GetMenuHeaders() {
       return g_wipe_header;
   if (current_menu_ == &g_advanced_actions)
       return g_advanced_header;
+  if (current_menu_ == &g_card_home_actions)
+      return g_card_home_header;
+  if (current_menu_ == &g_card_power_actions)
+      return g_card_power_header;
   return g_main_header;
 }
 
+const std::vector<std::string>& Device::GetMenuIcons() {
+  return g_menu_icons;
+}
+
+Device::MenuType Device::GetMenuType() const {
+  if (current_menu_ == &g_card_home_actions) {
+    return MenuType::CARD_HOME;
+  }
+  if (current_menu_ == &g_card_power_actions) {
+    return MenuType::CARD_POWER;
+  }
+  return MenuType::TEXT;
+}
+
 Device::BuiltinAction Device::InvokeMenuItem(size_t menu_position) {
-  Device::BuiltinAction action = (*current_menu_)[menu_position].second;
+  Device::BuiltinAction action = (*current_menu_)[menu_position].action;
 
   if (action > MENU_BASE) {
+    std::vector<menu_action_t>* next_menu = current_menu_;
     switch (action) {
       case Device::BuiltinAction::MENU_WIPE:
-        current_menu_ = &g_wipe_actions;
+        next_menu = &g_wipe_actions;
         break;
       case Device::BuiltinAction::MENU_ADVANCED:
-        current_menu_ = &g_advanced_actions;
+        next_menu = &g_advanced_actions;
+        break;
+      case Device::BuiltinAction::MENU_CARD_HOME:
+        next_menu = &g_card_home_actions;
+        break;
+      case Device::BuiltinAction::MENU_CARD_POWER:
+        next_menu = &g_card_power_actions;
+        break;
+      case Device::BuiltinAction::MENU_TEXT_HOME:
+        next_menu = &g_main_actions;
         break;
       default:
         break;
+    }
+    if (next_menu != current_menu_) {
+      if (next_menu == &g_card_home_actions) {
+        return_menu_ = &g_main_actions;
+      } else if (next_menu == &g_card_power_actions ||
+                 ((next_menu == &g_wipe_actions || next_menu == &g_advanced_actions) &&
+                  current_menu_ == &g_card_home_actions)) {
+        return_menu_ = &g_card_home_actions;
+      } else {
+        return_menu_ = &g_main_actions;
+      }
+      current_menu_ = next_menu;
     }
     PopulateMenuItems();
   }

@@ -258,6 +258,8 @@ class RecoveryUI {
                           bool menu_only, const std::function<int(int, bool)>& key_handler,
                           bool refreshable = false) = 0;
 
+  virtual void SetMenuItemsVisible(bool /* visible */) {}
+
   // Displays the localized wipe data menu with pre-generated graphs. If there's an issue
   // with the graphs, falls back to use the backup string headers and items instead. The initial
   // selection is the 0th item in the menu, which is expected to reboot the device without a wipe.

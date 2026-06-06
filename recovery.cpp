@@ -520,7 +520,12 @@ change_menu:
       return Device::KEY_INTERRUPTED;
     }
 
-    if (chosen_item == Device::kGoBack || chosen_item == Device::kGoHome) {
+    if (chosen_item == Device::kGoBack) {
+      device->GoBack();
+      goto change_menu;
+    }
+
+    if (chosen_item == Device::kGoHome) {
       device->GoHome();
       goto change_menu;
     }
@@ -536,6 +541,9 @@ change_menu:
       case Device::MENU_BASE:
       case Device::MENU_WIPE:
       case Device::MENU_ADVANCED:
+      case Device::MENU_CARD_HOME:
+      case Device::MENU_CARD_POWER:
+      case Device::MENU_TEXT_HOME:
         goto change_menu;
 
       case Device::REBOOT_FROM_FASTBOOT:    // Can not happen

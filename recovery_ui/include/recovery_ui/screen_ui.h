@@ -24,6 +24,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "ui.h"
@@ -111,6 +112,9 @@ class Menu {
   virtual size_t ItemsCount() const = 0;
   virtual bool IsMain() const = 0;
   virtual void SetMenuHeight(int height) = 0;
+  virtual int SelectTouch(const Point& point __unused) const {
+    return -1;
+  }
 
  protected:
   Menu(size_t initial_selection, const DrawInterface& draw_func);
@@ -171,7 +175,7 @@ class TextMenu : public Menu {
 
   // The number of displayable items is only known after we started drawing the menu (to consider logo, header, etc.)
   // Make it settable after the menu is created
-  void SetMenuHeight(int height) {
+  void SetMenuHeight(int height) override {
     if (!calibrated_height_) {
       max_display_items_ = height / draw_funcs_.MenuItemHeight();
       menu_start_ = std::max(0, (int)selection_ - (int)max_display_items_ + 1);
@@ -197,6 +201,43 @@ class TextMenu : public Menu {
 
   // Height in pixels of each character.
   int char_height_;
+};
+
+class CardMenu : public Menu {
+ public:
+  CardMenu(bool is_main, const std::vector<const GRSurface*>& normal_items,
+           const std::vector<const GRSurface*>& selected_items, size_t initial_selection,
+           const DrawInterface& draw_funcs);
+
+  int Select(int sel) override;
+  int SelectVisible(int relative_sel) override {
+    return Select(relative_sel);
+  }
+  int Scroll(int updown __unused) override {
+    return Select(selection_ + updown);
+  }
+  int DrawHeader(int x, int y) const override;
+  int DrawItems(int x, int y, int screen_width, bool long_press) const override;
+  size_t ItemsCount() const override;
+  bool IsMain() const override {
+    return is_main_;
+  }
+  void SetMenuHeight(int height) override;
+  int SelectTouch(const Point& point) const override;
+
+ private:
+  struct TileRect {
+    int left;
+    int top;
+    int right;
+    int bottom;
+  };
+
+  bool is_main_;
+  int menu_height_;
+  std::vector<const GRSurface*> normal_items_;
+  std::vector<const GRSurface*> selected_items_;
+  mutable std::vector<TileRect> tile_rects_;
 };
 
 // This class uses GRSurface's as the menu header and items.
@@ -322,6 +363,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
                   size_t initial_selection, bool menu_only,
                   const std::function<int(int, bool)>& key_handler, bool refreshable) override;
   void SetTitle(const std::vector<std::string>& lines) override;
+  void SetMenuItemsVisible(bool visible) override;
 
   void KeyLongPress(int) override;
 
@@ -387,6 +429,8 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   virtual std::unique_ptr<Menu> CreateMenu(const std::vector<std::string>& text_headers,
                                            const std::vector<std::string>& text_items,
                                            size_t initial_selection) const;
+  std::unique_ptr<Menu> CreateCardMenu(const std::vector<std::string>& icon_names,
+                                       size_t initial_selection, bool is_main) const;
 
   // Takes the ownership of |menu| and displays it.
   virtual size_t ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
@@ -424,6 +468,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   virtual void LoadAnimation();
   std::unique_ptr<GRSurface> LoadBitmap(const std::string& filename);
   std::unique_ptr<GRSurface> LoadLocalizedBitmap(const std::string& filename);
+  const GRSurface* GetCardBitmap(const std::string& name) const;
 
   int PixelsFromDp(int dp) const;
   virtual int GetAnimationBaseline() const;
@@ -479,6 +524,8 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   std::unique_ptr<GRSurface> back_icon_;
   std::unique_ptr<GRSurface> back_icon_sel_;
   std::unique_ptr<GRSurface> fastbootd_logo_;
+  mutable std::unordered_map<std::string, std::unique_ptr<GRSurface>> card_bitmaps_;
+  bool menu_items_visible_;
 
   // current_icon_ points to one of the frames in intro_frames_ or loop_frames_, indexed by
   // current_frame_, or error_icon_.
