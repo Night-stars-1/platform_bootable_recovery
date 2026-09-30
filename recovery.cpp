@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2007 The Android Open Source Project
+ * Copyright (C) 2026 The uwuAOSP Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,6 +59,7 @@
 #include "otautil/sysutil.h"
 #include "recovery_ui/screen_ui.h"
 #include "recovery_ui/ui.h"
+#include "recovery_ui/m3e_locale_store.h"
 #include "recovery_utils/battery_utils.h"
 #include "recovery_utils/logging.h"
 #include "recovery_utils/roots.h"
@@ -131,6 +133,13 @@ static bool IsRoDebuggable() {
 // copy our log file to cache as well (for the system to read). This function is
 // idempotent: call it as many times as you like.
 static void FinishRecovery(RecoveryUI* ui) {
+  const std::string preference = ui->ConsumeLanguagePreference();
+  if (!preference.empty()) {
+    bool saved = ensure_path_mounted("/metadata") == 0 &&
+        recovery_m3e::SaveLocaleAt(recovery_m3e::kLocaleDirectory, preference);
+    ui->Print(saved ? "Recovery language saved.\n" :
+                     "Cannot save language; it remains active for this session.\n");
+  }
   std::string locale = ui->GetLocale();
   // Save the locale to cache, so if recovery is next started up without a '--locale' argument
   // (e.g., directly from the bootloader) it will use the last-known locale.
@@ -516,13 +525,9 @@ change_menu:
       return Device::KEY_INTERRUPTED;
     }
 
-    if (chosen_item == Device::kGoBack) {
-      device->GoBack();
-      goto change_menu;
-    }
-
-    if (chosen_item == Device::kGoHome) {
-      device->GoHome();
+    if (chosen_item == Device::kGoBack || chosen_item == Device::kGoHome) {
+      if (chosen_item == Device::kGoBack) device->GoBack();
+      else device->GoHome();
       goto change_menu;
     }
 
@@ -537,9 +542,6 @@ change_menu:
       case Device::MENU_BASE:
       case Device::MENU_WIPE:
       case Device::MENU_ADVANCED:
-      case Device::MENU_CARD_HOME:
-      case Device::MENU_CARD_POWER:
-      case Device::MENU_TEXT_HOME:
         goto change_menu;
 
       case Device::REBOOT_FROM_FASTBOOT:    // Can not happen
