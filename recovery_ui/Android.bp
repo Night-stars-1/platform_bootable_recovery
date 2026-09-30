@@ -21,17 +21,23 @@ package {
     default_applicable_licenses: ["bootable_recovery_license"],
 }
 
-// The Roboto glyph data is distributed under the SIL Open Font License.
+// The M3E Roboto and Noto Sans SC glyph data is distributed under the SIL Open Font License.
 license {
-    name: "diting_recovery_m3e_font_license",
+    name: "recovery_m3e_font_license",
     visibility: [":__subpackages__"],
     license_kinds: ["SPDX-license-identifier-OFL"],
-    license_text: ["m3e-font-OFL.txt", "m3e-cjk-OFL.txt"],
+    license_text: [
+        "m3e-font-OFL.txt",
+        "m3e-cjk-OFL.txt",
+    ],
 }
 
 cc_library {
     name: "librecovery_ui",
-    licenses: ["bootable_recovery_license", "diting_recovery_m3e_font_license"],
+    licenses: [
+        "bootable_recovery_license",
+        "recovery_m3e_font_license",
+    ],
     recovery_available: true,
 
     defaults: [
