@@ -488,8 +488,11 @@ static bool AskToReboot(Device* device, Device::BuiltinAction chosen_action) {
 // Keep the result visible until the user returns to the menu or opens the complete log.
 static void ShowInstallResult(Device* device, InstallResult result) {
   auto ui = device->GetUI();
+  if (result == INSTALL_NONE) {
+    ui->SetInstallStage(RecoveryUI::InstallStage::NONE);
+    return;
+  }
   auto stage = result == INSTALL_SUCCESS ? RecoveryUI::InstallStage::SUCCESS
-               : result == INSTALL_NONE ? RecoveryUI::InstallStage::CANCELLED
                                         : RecoveryUI::InstallStage::ERROR;
   ui->SetInstallStage(stage);
   while (ui->IsTextVisible()) {
