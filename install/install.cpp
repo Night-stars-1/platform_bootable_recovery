@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2007 The Android Open Source Project
+ * Copyright (C) 2026 The uwuAOSP Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -646,6 +647,7 @@ static InstallResult VerifyAndInstallPackage(Package* package, bool* wipe_cache,
    */
 
   // Verify and install the contents of the package.
+  ui->SetInstallStage(RecoveryUI::InstallStage::INSTALLING);
   ui->Print("Installing update...\n");
   if (retry_count > 0) {
     ui->Print("Retry attempt: %d\n", retry_count);
@@ -662,6 +664,7 @@ static InstallResult VerifyAndInstallPackage(Package* package, bool* wipe_cache,
 InstallResult InstallPackage(Package* package, const std::string_view package_id,
                              bool should_wipe_cache, int retry_count, Device* device) {
   auto ui = device->GetUI();
+  ui->SetInstallStage(RecoveryUI::InstallStage::VERIFYING);
   auto start = std::chrono::system_clock::now();
 
   int start_temperature = GetMaxValueFromThermalZone();
@@ -745,6 +748,14 @@ InstallResult InstallPackage(Package* package, const std::string_view package_id
     }
   }
 
+  // Also cover command-line installs, which do not pass through PromptAndWait.
+  if (result == INSTALL_SUCCESS) {
+    ui->SetInstallStage(RecoveryUI::InstallStage::SUCCESS);
+  } else if (result == INSTALL_ERROR || result == INSTALL_CORRUPT) {
+    ui->SetInstallStage(RecoveryUI::InstallStage::ERROR);
+  } else {
+    ui->SetInstallStage(RecoveryUI::InstallStage::NONE);
+  }
   return result;
 }
 

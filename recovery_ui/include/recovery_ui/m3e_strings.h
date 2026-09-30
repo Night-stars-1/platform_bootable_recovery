@@ -104,6 +104,21 @@ inline constexpr Translation kTranslations[] = {
   {"Fastboot","Fastboot"},
   {"Reboot options and maintenance","重启选项与维护"},
   {"Language / Language","语言 / Language"},
+  {"ADB Sideload","ADB 侧载"},
+  {"Install result","安装结果"},
+  {"Waiting for a package","等待更新包"},
+  {"Verifying update","正在校验更新包"},
+  {"Installing update","正在安装更新"},
+  {"Installing security update","正在安装安全更新"},
+  {"Installation complete","安装完成"},
+  {"Installation failed","安装失败"},
+  {"Installation not started","安装未开始"},
+  {"Send the update package from your computer.","请从电脑发送更新包。"},
+  {"Checking the package signature.","正在验证更新包签名。"},
+  {"Keep the USB cable connected.","请保持 USB 连接。"},
+  {"You can return to the menu or read the log.","可以返回菜单或查看日志。"},
+  {"Open the recovery log for details.","请查看恢复日志了解原因。"},
+  {"Cancelled, or no package was received.","操作已取消，或未收到更新包。"},
 };
 inline std::string Tr(const std::string& text) {
   if(GetLanguage()!=Language::Chinese) return text;

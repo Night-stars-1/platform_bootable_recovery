@@ -19,6 +19,8 @@
 #ifndef RECOVERY_UI_H
 #define RECOVERY_UI_H
 
+#include "recovery_ui/install_status.h"
+
 #include <linux/input.h>  // KEY_MAX
 
 #include <atomic>
@@ -81,6 +83,9 @@ class Point {
 // Abstract class for controlling the user interface during recovery.
 class RecoveryUI {
  public:
+  using InstallStage = recovery_ui::InstallStage;
+  // Optional presentation API; custom/stub UIs keep their existing behavior.
+  virtual void SetInstallStage(InstallStage) {}
   enum Icon {
     NONE,
     INSTALLING_UPDATE,

@@ -330,6 +330,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   // overall recovery state ("background image")
   void SetBackground(Icon icon) override;
   void SetSystemUpdateText(bool security_update) override;
+  void SetInstallStage(InstallStage stage) override;
 
   // progress indicator
   void SetProgressType(ProgressType type) override;
@@ -496,6 +497,10 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   std::string m3e_pending_locale_;
   std::atomic<bool> m3e_security_update_{false};
   int m3e_menu_bottom_ = 0;
+  InstallStage m3e_install_stage_ = InstallStage::NONE;
+  std::vector<std::string> m3e_install_logs_;
+  bool IsInstallPageLocked() const;
+  void DrawInstallPageLocked();
   int DrawDashboard(int y, int width, int available, int selected, bool active) const override;
   int DrawMenuPrompt(int x, int y, const std::vector<std::string>& lines) const override;
   void DrawMenuCard(int y, int width, const std::string& label, bool selected, bool active) const override;
