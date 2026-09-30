@@ -269,7 +269,7 @@ inline void Chip(Canvas& c,const Metrics& m,int x,int y,const std::string& label
 }
 inline int DrawHeader(Canvas& c,const Metrics& m,int top,bool back,bool back_selected,bool fastboot,
                       int,int,const std::vector<std::string>& details,const Palette& p,
-                      const std::string& page="Recovery",bool dashboard=false) {
+                      const std::string& page="Recovery",bool dashboard=false,bool draw_brand=true) {
   auto b=BackBounds(m,top);
   int brand_x=m.inset;
   if(back) {
@@ -277,7 +277,7 @@ inline int DrawHeader(Canvas& c,const Metrics& m,int top,bool back,bool back_sel
     DrawIcon(c,Inset(b,Dp(m.width,14)),Icon::Back,p.text);
     brand_x+=b.w+Dp(m.width,12);
   }
-  c.Text(brand_x,top+Dp(m.width,13),"uwuAOSP",Font::Menu,p.text,true);
+  if(draw_brand) c.Text(brand_x,top+Dp(m.width,13),"uwuAOSP",Font::Menu,p.text,true);
   int y=top+b.h+Dp(m.width,14);
   Font title=dashboard?Font::Title:Font::Heading;
   if(!fastboot && page=="Recovery") {

@@ -66,12 +66,22 @@ void Render(const std::string& out,int w,int h,bool zh,int index,bool has_logo,b
   PixelCanvas c(w,h,pixels);Metrics m(w);auto p=Palette::ForMode(false);p.background={0,0,0};
   auto stage=stages[index];int rows=stage==InstallStage::WAITING?1:index>=3?2:0;
   int top=Dp(w,24),bottom=h-top;
-  int y=DrawInstallHeader(c,m,top,bottom,rows,false,{},p);
-  auto layout=InstallationLayout(m,y,bottom,rows,has_logo?600:0,has_logo?426:0);
+  int logo_height=has_logo?(pixels?120:Dp(w,36)):0;
+  int logo_width=pixels?169:static_cast<int>(std::lround(logo_height*653.0/464.0));
+  auto logo=InstallHeaderLogo(m,top,bottom,rows,has_logo?logo_width:0,logo_height);
+  int y=DrawInstallHeader(c,m,top,bottom,rows,false,{},p,logo);
+  auto layout=InstallationLayout(m,y,bottom,rows);
   assert(layout.panel.y>=y && layout.panel.y+layout.panel.h<=bottom);
-  if(layout.logo.w) {
-    assert(layout.logo.y>=y && layout.logo.y+layout.logo.h<layout.panel.y);
-    c.Blit(out+"/logo.ppm",layout.logo);
+  assert(layout.panel.y==y); // No illustration or empty illustration gap above the panel.
+  if(logo.w) {
+    auto back=BackBounds(m,top);
+    assert(logo.y>=top && logo.y+logo.h<=top+back.h);
+    assert(logo.x+logo.w<=w-m.inset-Dp(w,90));
+    if(rows) assert(logo.x>=back.x+back.w+Dp(w,12));
+    assert(!c.Has("uwuAOSP")); // Artwork replaces, rather than duplicates, the brand text.
+    c.Blit(out+"/logo.ppm",logo);
+  } else if(!CompactInstallHeader(m,top,bottom,rows)) {
+    assert(c.Has("uwuAOSP"));
   }
   c.runs.clear();
   std::vector<std::string> logs;
@@ -104,6 +114,7 @@ void Render(const std::string& out,int w,int h,bool zh,int index,bool has_logo,b
 }
 void CheckProgress() {
   SetScaleBasis(360,800);SetLanguage(Language::English);Metrics m(360);Palette p;
+  assert(InstallHeaderLogo(m,24,776,2,600,426).w==0); // Oversized custom resource fallback.
   for(double value:{-1.0,0.0,0.42,1.0,5.0,std::numeric_limits<double>::quiet_NaN()}) {
     PixelCanvas c(360,800);
     DrawInstallPanel(c,m,{24,24,312,188},InstallStage::INSTALLING,value,true,false,{},p);
