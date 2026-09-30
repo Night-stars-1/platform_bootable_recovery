@@ -255,19 +255,10 @@ inline DeviceInfo ReadDeviceInfo(const std::vector<std::string>& lines) {
   return info;
 }
 inline Rect BackBounds(const Metrics& m,int top) {return {m.inset,top,Dp(m.width,48),Dp(m.width,48)};}
-inline int HomeLogoWidth(const Metrics& m,int screen_height,int margin_height,int image_width,int image_height) {
-  if(image_width<=0 || image_height<=0) return 0;
-  // Keep space for two list rows even on short landscape screens without a footer.
-  int margin=std::max(margin_height,Dp(m.width,24));
-  int max_height=screen_height-2*margin-Dp(m.width,48)-Dp(m.width,14)-Dp(m.width,12)
-      -Dp(m.width,0)-2*m.row_height-m.gap;
-  if(max_height<=0) return 0;
-  int fit_width=static_cast<int>(std::floor(double(max_height)*image_width/image_height));
-  return std::max(0,std::min({Dp(m.width,160),m.width-2*m.inset,fit_width}));
-}
-inline int HeaderBottom(const Metrics& m,int top,bool dashboard,int logo_height=0) {
+inline int HeaderBottom(const Metrics& m,int top,bool dashboard) {
   int y=top+Dp(m.width,48)+Dp(m.width,14);
-  y+=(logo_height>0?logo_height:LineHeight(FontPixels(dashboard?Font::Title:Font::Heading,m.width)))+Dp(m.width,dashboard?8:0);
+  y+=LineHeight(FontPixels(dashboard?Font::Title:Font::Heading,m.width))+Dp(m.width,dashboard?8:0);
+  if(dashboard) y+=Dp(m.width,28);
   return y+Dp(m.width,dashboard?20:12);
 }
 inline void Chip(Canvas& c,const Metrics& m,int x,int y,const std::string& label,const Palette& p) {
@@ -277,10 +268,8 @@ inline void Chip(Canvas& c,const Metrics& m,int x,int y,const std::string& label
   c.Text(x+pad,y+(height-LineHeight(FontPixels(Font::Small,m.width)))/2,label,Font::Small,p.secondary,true);
 }
 inline int DrawHeader(Canvas& c,const Metrics& m,int top,bool back,bool back_selected,bool fastboot,
-                      int,int,const std::vector<std::string>& /*details*/,const Palette& p,
-                      const std::string& page="Recovery",bool dashboard=false,int logo_height=0) {
-  // Only the Recovery home page may replace its title with artwork.
-  if(back || fastboot || page!="Recovery") logo_height=0;
+                      int,int,const std::vector<std::string>& details,const Palette& p,
+                      const std::string& page="Recovery",bool dashboard=false) {
   auto b=BackBounds(m,top);
   int brand_x=m.inset;
   if(back) {
@@ -291,16 +280,25 @@ inline int DrawHeader(Canvas& c,const Metrics& m,int top,bool back,bool back_sel
   c.Text(brand_x,top+Dp(m.width,13),"uwuAOSP",Font::Menu,p.text,true);
   int y=top+b.h+Dp(m.width,14);
   Font title=dashboard?Font::Title:Font::Heading;
-  // A loaded home logo is drawn by ScreenRecoveryUI in the reserved title area.
-  if(logo_height<=0) {
-    if(!fastboot && page=="Recovery") {
-      // Keep the fallback home title in English in every UI language.
-      c.Text(m.inset,y,FitText(page,m.width-2*m.inset,FontPixels(title,m.width),true),title,p.text,true);
-    } else {
-      Label(c,m,m.inset,y,m.width-2*m.inset,fastboot?"Fastboot":page,title,p.text,true);
-    }
+  if(!fastboot && page=="Recovery") {
+    // Keep the home title in English in every UI language.
+    c.Text(m.inset,y,FitText(page,m.width-2*m.inset,FontPixels(title,m.width),true),title,p.text,true);
+  } else {
+    Label(c,m,m.inset,y,m.width-2*m.inset,fastboot?"Fastboot":page,title,p.text,true);
   }
-  return HeaderBottom(m,top,dashboard,logo_height);
+  y+=LineHeight(FontPixels(title,m.width))+Dp(m.width,dashboard?8:0);
+  if(dashboard) {
+    auto info=ReadDeviceInfo(details);
+    int x=m.inset;
+    if(!info.product.empty()) {
+      std::string name=FitText(info.product,Dp(m.width,140),FontPixels(Font::Small,m.width),true);
+      Chip(c,m,x,y,name,p);
+      x+=TextWidth(name,FontPixels(Font::Small,m.width),true)+Dp(m.width,32);
+    }
+    if(!info.slot.empty()) Chip(c,m,x,y,Tr("Slot ")+FitText(info.slot,Dp(m.width,40),FontPixels(Font::Small,m.width),true),p);
+    y+=Dp(m.width,28);
+  }
+  return HeaderBottom(m,top,dashboard);
 }
 inline void DrawBattery(Canvas& c,const Metrics& m,int top,int capacity,bool charging,const Palette& p) {
   std::string value=capacity>=0 && capacity<=100?std::to_string(capacity)+"%":"--%";
@@ -379,38 +377,14 @@ inline int DrawPrompt(Canvas& c,const Metrics& m,int y,const std::vector<std::st
   return box.y+box.h+Dp(m.width,12);
 }
 inline void DrawFooter(Canvas& c,const Metrics& m,int y,int bottom,const std::vector<std::string>& details,
-                      bool,bool,const std::vector<std::string>& logs,const Palette& p,bool home=false) {
+                      bool,bool,const std::vector<std::string>& logs,const Palette& p) {
   int small=FontPixels(Font::Small,m.width),lh=LineHeight(small);
   auto info=ReadDeviceInfo(details);
+  int version_y=bottom-lh;
   std::string metadata=info.version;
   if(metadata.empty() && !info.extra.empty()) metadata=info.extra.front();
-  int inner_width=m.width-2*m.inset,gap=Dp(m.width,8),pad=Dp(m.width,12);
-  std::vector<std::string> tags;
-  if(home) {
-    // Reserve readable version text and bound each tag, including unusually long device names.
-    int text_limit=std::max(0,(inner_width-Dp(m.width,80))/2-2*pad-gap);
-    if(!info.product.empty()) tags.push_back(FitText(info.product,text_limit,small,true));
-    if(!info.slot.empty()) tags.push_back(FitText(Tr("Slot ")+info.slot,text_limit,small,true));
-  }
-  int tag_width=0;
-  for(const auto& tag:tags) tag_width+=TextWidth(tag,small,true)+2*pad+gap;
-  if(!tags.empty()) tag_width-=gap;
-  int row_height=tags.empty()?lh:std::max(lh,Dp(m.width,28));
-  int row_top=bottom-row_height;
-  if(row_top>=y) {
-    int x=m.inset;
-    if(!metadata.empty()) {
-      int version_width=std::max(0,inner_width-tag_width-(tags.empty()?0:gap));
-      std::string version=FitText(Tr(metadata),version_width,small);
-      c.Text(x,row_top+(row_height-lh)/2,version,Font::Small,p.secondary,false);
-      x+=TextWidth(version,small)+(tags.empty()?0:gap);
-    }
-    for(const auto& tag:tags) {
-      Chip(c,m,x,row_top+(row_height-Dp(m.width,28))/2,tag,p);
-      x+=TextWidth(tag,small,true)+2*pad+gap;
-    }
-  }
-  int box_bottom=row_top-Dp(m.width,16);
+  if(version_y>=y && !metadata.empty()) Label(c,m,m.inset,version_y,m.width-2*m.inset,metadata,Font::Small,p.secondary);
+  int box_bottom=version_y-Dp(m.width,16);
   int needed=Dp(m.width,22)+lh*(logs.empty()?1:3);
   if(!logs.empty() && box_bottom-y>=needed) {
     Rect box{m.inset,box_bottom-needed,m.width-2*m.inset,needed};
