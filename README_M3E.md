@@ -8,7 +8,7 @@ M3E 是一套 Material 3 Expressive 风格的 Recovery 界面，直接在原有 
 不依赖 Java、Compose 或设备端字体库；字形数据预先生成为头文件编译进 `librecovery_ui`。
 界面与具体机型无关，适用于任何使用本仓库作为 `bootable/recovery` 的设备。
 
-![主页预览（主机渲染，非手机截图）](tools/m3e/preview/preview.png)
+![主页预览（主机渲染，非手机截图）](tools/m3e/preview/home-logo-preview.png)
 ![重启选项预览（主机渲染，非手机截图）](tools/m3e/preview/reboot-preview.png)
 
 预览图由主机上的 C++ 绘制器生成，电量、版本、槽位等为样例数据。
@@ -24,7 +24,12 @@ M3E 是一套 Material 3 Expressive 风格的 Recovery 界面，直接在原有 
 返回键逐级返回（从首页打开的重启菜单返回首页，从设置打开则返回设置）。
 OTA 安装、签名校验、擦除确认等逻辑沿用上游实现。
 
-## 状态页图标
+## 主页与状态页图标
+
+主页的大号 `Recovery` 文字标题使用同一幅 uwu Recovery Logo 替换，按屏幕短边
+等比例缩放到最多 160dp 宽；横屏或矮屏进一步缩小，为至少两项菜单预留空间。
+图片外围与 M3E 页面背景一致，设备/槽位标签位于图标下方。其他页面继续显示文字标题；
+自定义资源集缺少主页 Logo 时回退到 `Recovery` 文字。
 
 安装更新、安装安全更新、擦除、错误和无命令页面使用 Jelly10086 / AOSP-VtuberLOGO 的
 `uwu-Rec.png`，状态文案和安装进度条保持原有行为。图标是静态图片。
@@ -32,7 +37,8 @@ OTA 安装、签名校验、擦除确认等逻辑沿用上游实现。
 ![状态页预览（主机资源渲染，非手机截图）](tools/m3e/preview/status-preview.png)
 
 原图、来源与 SHA-256 保存在 `tools/m3e/assets/`。生成器仅去除外围透明留白、
-按原比例生成 200dp 宽的五档密度资源，并合成到状态页原有黑色背景；minui 的
+按原比例生成状态页 200dp、主页 160dp 宽的五档密度资源，并分别合成到状态页黑色背景
+与主页 M3E 背景；minui 的
 display surface 不接受 RGBA，因此提交的显示资源使用 8-bit RGB PNG。
 缺少新图标的自定义资源集仍回退到上游动画和错误图标。
 

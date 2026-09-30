@@ -252,9 +252,19 @@ inline DeviceInfo ReadDeviceInfo(const std::vector<std::string>& lines) {
   return info;
 }
 inline Rect BackBounds(const Metrics& m,int top) {return {m.inset,top,Dp(m.width,48),Dp(m.width,48)};}
-inline int HeaderBottom(const Metrics& m,int top,bool dashboard) {
+inline int HomeLogoWidth(const Metrics& m,int screen_height,int margin_height,int image_width,int image_height) {
+  if(image_width<=0 || image_height<=0) return 0;
+  // Keep space for two list rows even on short landscape screens without a footer.
+  int margin=std::max(margin_height,Dp(m.width,24));
+  int max_height=screen_height-2*margin-Dp(m.width,48)-Dp(m.width,14)-Dp(m.width,12)
+      -Dp(m.width,0)-2*m.row_height-m.gap;
+  if(max_height<=0) return 0;
+  int fit_width=static_cast<int>(std::floor(double(max_height)*image_width/image_height));
+  return std::max(0,std::min({Dp(m.width,160),m.width-2*m.inset,fit_width}));
+}
+inline int HeaderBottom(const Metrics& m,int top,bool dashboard,int logo_height=0) {
   int y=top+Dp(m.width,48)+Dp(m.width,14);
-  y+=LineHeight(FontPixels(dashboard?Font::Title:Font::Heading,m.width))+Dp(m.width,dashboard?8:0);
+  y+=(logo_height>0?logo_height:LineHeight(FontPixels(dashboard?Font::Title:Font::Heading,m.width)))+Dp(m.width,dashboard?8:0);
   if(dashboard) y+=Dp(m.width,28);
   return y+Dp(m.width,dashboard?20:12);
 }
@@ -266,7 +276,9 @@ inline void Chip(Canvas& c,const Metrics& m,int x,int y,const std::string& label
 }
 inline int DrawHeader(Canvas& c,const Metrics& m,int top,bool back,bool back_selected,bool fastboot,
                       int,int,const std::vector<std::string>& details,const Palette& p,
-                      const std::string& page="Recovery",bool dashboard=false) {
+                      const std::string& page="Recovery",bool dashboard=false,int logo_height=0) {
+  // Only the Recovery home page may replace its title with artwork.
+  if(back || fastboot || page!="Recovery") logo_height=0;
   auto b=BackBounds(m,top);
   int brand_x=m.inset;
   if(back) {
@@ -277,13 +289,16 @@ inline int DrawHeader(Canvas& c,const Metrics& m,int top,bool back,bool back_sel
   c.Text(brand_x,top+Dp(m.width,13),"uwuAOSP",Font::Menu,p.text,true);
   int y=top+b.h+Dp(m.width,14);
   Font title=dashboard?Font::Title:Font::Heading;
-  if(!fastboot && page=="Recovery") {
-    // Keep the home title in English in every UI language.
-    c.Text(m.inset,y,FitText(page,m.width-2*m.inset,FontPixels(title,m.width),true),title,p.text,true);
-  } else {
-    Label(c,m,m.inset,y,m.width-2*m.inset,fastboot?"Fastboot":page,title,p.text,true);
+  // A loaded home logo is drawn by ScreenRecoveryUI in the reserved title area.
+  if(logo_height<=0) {
+    if(!fastboot && page=="Recovery") {
+      // Keep the fallback home title in English in every UI language.
+      c.Text(m.inset,y,FitText(page,m.width-2*m.inset,FontPixels(title,m.width),true),title,p.text,true);
+    } else {
+      Label(c,m,m.inset,y,m.width-2*m.inset,fastboot?"Fastboot":page,title,p.text,true);
+    }
   }
-  y+=LineHeight(FontPixels(title,m.width))+Dp(m.width,dashboard?8:0);
+  y+=(logo_height>0?logo_height:LineHeight(FontPixels(title,m.width)))+Dp(m.width,dashboard?8:0);
   if(dashboard) {
     auto info=ReadDeviceInfo(details);
     int x=m.inset;
@@ -295,7 +310,7 @@ inline int DrawHeader(Canvas& c,const Metrics& m,int top,bool back,bool back_sel
     if(!info.slot.empty()) Chip(c,m,x,y,Tr("Slot ")+FitText(info.slot,Dp(m.width,40),FontPixels(Font::Small,m.width),true),p);
     y+=Dp(m.width,28);
   }
-  return HeaderBottom(m,top,dashboard);
+  return HeaderBottom(m,top,dashboard,logo_height);
 }
 inline void DrawBattery(Canvas& c,const Metrics& m,int top,int capacity,bool charging,const Palette& p) {
   std::string value=capacity>=0 && capacity<=100?std::to_string(capacity)+"%":"--%";
