@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: The uwuAOSP Project
 # SPDX-License-Identifier: Apache-2.0
-"""Generate minui-compatible status logos from the pinned user-selected artwork."""
+"""Generate minui-compatible status and home logos from the pinned artwork."""
 
 import argparse
 import hashlib
@@ -28,17 +28,22 @@ def generate(out: Path) -> None:
     if list(bounds or ()) != spec["alpha_bounds"]:
         raise ValueError("Unexpected transparent padding")
     art = rgba.crop(bounds)
+    variants = (
+        ("uwu_recovery_status", spec["display_width_dp"], spec["background"]),
+        ("uwu_recovery_home", spec["home_display_width_dp"], spec["home_background"]),
+    )
     for density, scale in DENSITIES.items():
-        width = round(spec["display_width_dp"] * scale)
-        height = round(width * art.height / art.width)
-        resized = art.resize((width, height), Image.Resampling.LANCZOS)
-        # minui display surfaces accept RGB, not RGBA; gr_blit does not alpha blend.
-        background = Image.new("RGBA", resized.size, tuple(spec["background"]) + (255,))
-        rgb = Image.alpha_composite(background, resized).convert("RGB")
-        target = out / f"res-{density}" / "images" / "uwu_recovery_status.png"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        rgb.save(target, optimize=True)
-        print(f"{target}: {width}x{height} RGB")
+        for name, width_dp, color in variants:
+            width = round(width_dp * scale)
+            height = round(width * art.height / art.width)
+            resized = art.resize((width, height), Image.Resampling.LANCZOS)
+            # minui display surfaces accept RGB, not RGBA; gr_blit does not alpha blend.
+            background = Image.new("RGBA", resized.size, tuple(color) + (255,))
+            rgb = Image.alpha_composite(background, resized).convert("RGB")
+            target = out / f"res-{density}" / "images" / (name + ".png")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            rgb.save(target, optimize=True)
+            print(f"{target}: {width}x{height} RGB")
 
 
 if __name__ == "__main__":

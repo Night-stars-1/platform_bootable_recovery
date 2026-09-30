@@ -87,6 +87,35 @@ class M3eCanvas : public recovery_m3e::Canvas {
 };
 static void M3eSetColor(recovery_m3e::Color c) { gr_color(c.r, c.g, c.b, 255); }
 
+// Scale once at initialization; preserve the framebuffer's loaded byte/channel order.
+static std::unique_ptr<GRSurface> M3eScaleBitmap(std::unique_ptr<GRSurface> source, int width) {
+  if (!source || source->width == 0 || source->height == 0 || width <= 0) return nullptr;
+  if (source->width == static_cast<size_t>(width)) return source;
+  int height = std::max(1, static_cast<int>(std::lround(width * double(source->height) / source->width)));
+  auto scaled = GRSurface::Create(width, height, width * source->pixel_bytes, source->pixel_bytes);
+  if (!scaled) return nullptr;
+  for (int y = 0; y < height; ++y) {
+    double sy = std::clamp((y + 0.5) * source->height / height - 0.5, 0.0, double(source->height - 1));
+    size_t y0 = static_cast<size_t>(sy), y1 = std::min(y0 + 1, source->height - 1);
+    double fy = sy - y0;
+    for (int x = 0; x < width; ++x) {
+      double sx = std::clamp((x + 0.5) * source->width / width - 0.5, 0.0, double(source->width - 1));
+      size_t x0 = static_cast<size_t>(sx), x1 = std::min(x0 + 1, source->width - 1);
+      double fx = sx - x0;
+      for (size_t channel = 0; channel < source->pixel_bytes; ++channel) {
+        auto pixel = [&](size_t px, size_t py) {
+          return source->data()[py * source->row_bytes + px * source->pixel_bytes + channel];
+        };
+        double upper = pixel(x0, y0) * (1 - fx) + pixel(x1, y0) * fx;
+        double lower = pixel(x0, y1) * (1 - fx) + pixel(x1, y1) * fx;
+        scaled->data()[y * scaled->row_bytes + x * scaled->pixel_bytes + channel] =
+            static_cast<uint8_t>(std::lround(upper * (1 - fy) + lower * fy));
+      }
+    }
+  }
+  return scaled;
+}
+
 enum DirectRenderManager {
     DRM_INNER,
     DRM_OUTER,
@@ -895,11 +924,17 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(const std::vector<std::s
     int top = std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
     int bottom = ScreenHeight() - std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
     int footer = recovery_m3e::Dp(ScreenWidth(), 76);
+    const GRSurface* home_logo = menu_->IsMain() && !fastbootd_logo_enabled_ ? home_logo_.get() : nullptr;
+    int logo_height = gr_get_height(home_logo);
     bool dashboard = menu_->DashboardCandidate() &&
-        bottom - footer - recovery_m3e::HeaderBottom(m, top, true) >= recovery_m3e::DashboardMinimum(m);
+        bottom - footer - recovery_m3e::HeaderBottom(m, top, true, logo_height) >= recovery_m3e::DashboardMinimum(m);
     int y = recovery_m3e::DrawHeader(canvas, m, top, !menu_->IsMain(), menu_->selection() == -1,
         fastbootd_logo_enabled_, char_width_, char_height_, title_lines_, palette,
-        menu_->PageTitle(), dashboard);
+        menu_->PageTitle(), dashboard, logo_height);
+    if (home_logo) {
+      DrawSurface(home_logo, 0, 0, home_logo->width, home_logo->height, m.inset,
+                  top + recovery_m3e::Dp(ScreenWidth(), 48) + recovery_m3e::Dp(ScreenWidth(), 14));
+    }
     y += menu_->DrawHeader(m.inset, y);
     menu_start_y_ = y;
     m3e_menu_bottom_ = bottom - footer;
@@ -1192,6 +1227,12 @@ bool ScreenRecoveryUI::Init(const std::string& locale) {
   recovery_m3e::SetLanguage(recovery_m3e::LanguageForLocale(locale));
 
   status_logo_ = LoadBitmap("uwu_recovery_status");
+  auto home_bitmap = LoadBitmap("uwu_recovery_home");
+  if (home_bitmap) {
+    int home_logo_width = recovery_m3e::HomeLogoWidth(recovery_m3e::Metrics(ScreenWidth()),
+        ScreenHeight(), margin_height_, home_bitmap->width, home_bitmap->height);
+    home_logo_ = M3eScaleBitmap(std::move(home_bitmap), home_logo_width);
+  }
   if (!status_logo_) {
     // Preserve the upstream graphics when a device supplies its own resource set.
     error_icon_ = LoadBitmap("icon_error");
