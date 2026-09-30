@@ -16,22 +16,11 @@ inline int InstallButtonSpace(const Metrics& m,int rows) {
 inline bool CompactInstallHeader(const Metrics& m,int top,int bottom,int menu_rows) {
   return bottom-HeaderBottom(m,top,false)-InstallButtonSpace(m,menu_rows)<Dp(m.width,188);
 }
-inline Rect InstallHeaderLogo(const Metrics& m,int top,int bottom,int menu_rows,
-                              int logo_width,int logo_height) {
-  auto back=BackBounds(m,top);
-  int x=m.inset+(menu_rows>0?back.w+Dp(m.width,12):0);
-  // Keep the brand inside the app bar, clear of the battery and back hit target.
-  int available=m.width-m.inset-Dp(m.width,90)-x;
-  if(CompactInstallHeader(m,top,bottom,menu_rows) || logo_width<=0 || logo_height<=0 ||
-     logo_width>available || logo_height>back.h) return {0,0,0,0};
-  return {x,top+(back.h-logo_height)/2,logo_width,logo_height};
-}
 inline int DrawInstallHeader(Canvas& c,const Metrics& m,int top,int bottom,int menu_rows,
                              bool back_selected,const std::vector<std::string>& details,
-                             const Palette& p,Rect logo={0,0,0,0}) {
+                             const Palette& p) {
   if(!CompactInstallHeader(m,top,bottom,menu_rows)) {
-    return DrawHeader(c,m,top,menu_rows>0,back_selected,false,0,0,details,p,"Install update",false,
-                      logo.w==0);
+    return DrawHeader(c,m,top,menu_rows>0,back_selected,false,0,0,details,p,"Install update",false);
   }
   // Keep both result actions reachable on landscape/compact displays. The back hit area
   // stays identical to the regular header used by ScreenRecoveryUI::SelectMenu.

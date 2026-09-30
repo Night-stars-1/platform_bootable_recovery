@@ -129,8 +129,6 @@ def run(cxx, out, ndk_clang=None):
     with tempfile.TemporaryDirectory(prefix='m3e-install-') as temp:
         build = Path(temp)
         (build / 'install_routing.inc').write_text(routing_test(), encoding='utf-8')
-        with Image.open(ROOT / 'res-xxhdpi/images/uwu_recovery_header.png') as logo:
-            logo.save(build / 'logo.ppm')
         exe = build / ('test.exe' if os.name == 'nt' else 'test')
         subprocess.run([cxx, '-std=c++17', '-O1', '-Wall', '-Wextra', '-Werror',
                         '-DM3E_INSTALL_ROUTING_TEST', '-I' + str(ROOT / 'recovery_ui/include'),

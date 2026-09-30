@@ -5,7 +5,6 @@
   "original_size": [1890, 1417],
   "alpha_bounds": [658, 469, 1311, 933],
   "display_width_dp": 200,
-  "header_height_dp": 40,
   "background": [0, 0, 0],
   "note": "Original artwork retained unmodified. Generated display resources crop transparent padding, scale proportionally and composite onto the existing black Recovery status background for minui RGB compatibility."
 }
