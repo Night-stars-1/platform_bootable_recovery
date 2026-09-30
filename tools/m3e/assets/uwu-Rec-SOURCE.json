@@ -6,7 +6,5 @@
   "alpha_bounds": [658, 469, 1311, 933],
   "display_width_dp": 200,
   "background": [0, 0, 0],
-  "home_display_width_dp": 160,
-  "home_background": [18, 17, 24],
-  "note": "Original artwork retained unmodified. Generated display resources crop transparent padding, scale proportionally and composite onto each page's solid background (black status pages or the M3E home background) for minui RGB compatibility."
+  "note": "Original artwork retained unmodified. Generated display resources crop transparent padding, scale proportionally and composite onto the existing black Recovery status background for minui RGB compatibility."
 }
