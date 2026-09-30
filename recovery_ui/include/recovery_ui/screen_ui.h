@@ -520,9 +520,10 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   std::unique_ptr<GRSurface> back_icon_sel_;
   std::unique_ptr<GRSurface> fastbootd_logo_;
 
-  // current_icon_ points to one of the frames in intro_frames_ or loop_frames_, indexed by
-  // current_frame_, or error_icon_.
+  // Status screens use the static uwu logo. When unavailable, current_icon_ selects one of
+  // intro_frames_ / loop_frames_ (indexed by current_frame_) or error_icon_.
   Icon current_icon_;
+  std::unique_ptr<GRSurface> status_logo_;
   std::unique_ptr<GRSurface> error_icon_;
   std::vector<std::unique_ptr<GRSurface>> intro_frames_;
   std::vector<std::unique_ptr<GRSurface>> loop_frames_;

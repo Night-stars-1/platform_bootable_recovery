@@ -498,6 +498,9 @@ ScreenRecoveryUI::~ScreenRecoveryUI() {
 }
 
 const GRSurface* ScreenRecoveryUI::GetCurrentFrame() const {
+  if (status_logo_) {
+    return status_logo_.get();
+  }
   if (current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING) {
     return intro_done_ ? loop_frames_[current_frame_].get() : intro_frames_[current_frame_].get();
   }
@@ -549,7 +552,7 @@ static constexpr int kLayouts[LAYOUT_MAX][DIMENSION_MAX] = {
 
 int ScreenRecoveryUI::GetAnimationBaseline() const {
   return GetTextBaseline() - PixelsFromDp(kLayouts[layout_][ICON]) -
-         gr_get_height(loop_frames_[0].get());
+         gr_get_height(GetCurrentFrame());
 }
 
 int ScreenRecoveryUI::GetTextBaseline() const {
@@ -558,7 +561,7 @@ int ScreenRecoveryUI::GetTextBaseline() const {
 }
 
 int ScreenRecoveryUI::GetProgressBaseline() const {
-  int elements_sum = gr_get_height(loop_frames_[0].get()) + PixelsFromDp(kLayouts[layout_][ICON]) +
+  int elements_sum = gr_get_height(GetCurrentFrame()) + PixelsFromDp(kLayouts[layout_][ICON]) +
                      gr_get_height(installing_text_.get()) + PixelsFromDp(kLayouts[layout_][TEXT]) +
                      gr_get_height(progress_bar_fill_.get());
   int bottom_gap = (ScreenHeight() - elements_sum) / 2;
@@ -1027,7 +1030,8 @@ void ScreenRecoveryUI::ProgressThreadLoop() {
 
       // update the installation animation, if active
       // skip this if we have a text overlay (too expensive to update)
-      if ((current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING) && !show_text) {
+      if (!status_logo_ && (current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING) &&
+          !show_text) {
         if (!intro_done_) {
           if (current_frame_ == intro_frames_.size() - 1) {
             intro_done_ = true;
@@ -1186,7 +1190,11 @@ bool ScreenRecoveryUI::Init(const std::string& locale) {
   SetLocale(locale);
   recovery_m3e::SetLanguage(recovery_m3e::LanguageForLocale(locale));
 
-  error_icon_ = LoadBitmap("icon_error");
+  status_logo_ = LoadBitmap("uwu_recovery_status");
+  if (!status_logo_) {
+    // Preserve the upstream graphics when a device supplies its own resource set.
+    error_icon_ = LoadBitmap("icon_error");
+  }
 
   progress_bar_empty_ = LoadBitmap("progress_empty");
   progress_bar_fill_ = LoadBitmap("progress_fill");
@@ -1213,7 +1221,9 @@ bool ScreenRecoveryUI::Init(const std::string& locale) {
 
   LoadWipeDataMenuText();
 
-  LoadAnimation();
+  if (!status_logo_) {
+    LoadAnimation();
+  }
 
   is_battery_less = android::base::GetBoolProperty("ro.recovery.batteryless", false);
   if (!is_battery_less)

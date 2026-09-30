@@ -24,6 +24,28 @@ M3E 是一套 Material 3 Expressive 风格的 Recovery 界面，直接在原有 
 返回键逐级返回（从首页打开的重启菜单返回首页，从设置打开则返回设置）。
 OTA 安装、签名校验、擦除确认等逻辑沿用上游实现。
 
+## 状态页图标
+
+安装更新、安装安全更新、擦除、错误和无命令页面使用 Jelly10086 / AOSP-VtuberLOGO 的
+`uwu-Rec.png`，状态文案和安装进度条保持原有行为。图标是静态图片。
+
+![状态页预览（主机资源渲染，非手机截图）](tools/m3e/preview/status-preview.png)
+
+原图、来源与 SHA-256 保存在 `tools/m3e/assets/`。生成器仅去除外围透明留白、
+按原比例生成 200dp 宽的五档密度资源，并合成到状态页原有黑色背景；minui 的
+display surface 不接受 RGBA，因此提交的显示资源使用 8-bit RGB PNG。
+缺少新图标的自定义资源集仍回退到上游动画和错误图标。
+
+使用 Python 3 与 Pillow 重新生成：
+
+```bash
+python3 tools/m3e/generate_status_logo.py
+python3 tools/m3e/render_status_preview.py
+```
+
+图标沿用原作者的作品，来源见 `tools/m3e/assets/uwu-Rec-SOURCE.json`；
+本仓库的代码许可不改变该外部图片的权属。状态页已做主机资源与布局检查，仍需重编译 Recovery 验证实机显示。
+
 ## 语言保存
 
 选择语言后原子写入 `/metadata/recovery/m3e_locale`，不依赖解密 `/data`。
