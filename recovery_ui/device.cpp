@@ -41,7 +41,6 @@ static std::vector<menu_action_t> g_main_actions{
 static std::vector<std::string> g_settings_header{ "Settings" };
 static std::vector<menu_action_t> g_settings_actions{
   { "Language", static_cast<int>(MenuRoute::Language) },
-  { "Reboot options", static_cast<int>(MenuRoute::Reboot) },
   { "View recovery logs", Device::VIEW_RECOVERY_LOGS },
   { "Advanced tools", static_cast<int>(MenuRoute::Maintenance) },
 };
