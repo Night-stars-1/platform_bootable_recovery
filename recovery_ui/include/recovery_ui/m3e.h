@@ -7,9 +7,18 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 namespace recovery_m3e {
 struct Color { uint8_t r,g,b; };
+// Alerts sit on the solid page background; composite here for identical device/host output.
+inline Color CompositeOver(Color foreground,Color background,uint8_t alpha) {
+  auto channel=[alpha](uint8_t front,uint8_t back) {
+    return static_cast<uint8_t>((front*alpha+back*(255-alpha)+127)/255);
+  };
+  return {channel(foreground.r,background.r),channel(foreground.g,background.g),
+          channel(foreground.b,background.b)};
+}
 struct Rect {
   int x,y,w,h;
   bool Contains(int px,int py) const {return px>=x && py>=y && px<x+w && py<y+h;}
@@ -27,6 +36,8 @@ struct Palette {
   Color error{245,170,168},error_surface{46,29,34},on_error{66,20,27};
   Color pressed{227,213,255},mint{202,237,214},on_mint{23,59,40};
   Color blue{207,222,255},on_blue{29,48,79};
+  Color alert_info{150,194,255},alert_success{151,217,171},alert_warning{255,193,115};
+  uint8_t alert_opacity=24;  // About 9% tint; the page remains visible underneath.
   static Palette ForMode(bool fastboot) {
     Palette p;
     if(fastboot) {p.primary={255,208,153};p.on_primary={71,43,16};}
@@ -243,9 +254,9 @@ inline DeviceInfo ReadDeviceInfo(const std::vector<std::string>& lines) {
 inline Rect BackBounds(const Metrics& m,int top) {return {m.inset,top,Dp(m.width,48),Dp(m.width,48)};}
 inline int HeaderBottom(const Metrics& m,int top,bool dashboard) {
   int y=top+Dp(m.width,48)+Dp(m.width,14);
-  y+=LineHeight(FontPixels(dashboard?Font::Title:Font::Heading,m.width))+Dp(m.width,8);
+  y+=LineHeight(FontPixels(dashboard?Font::Title:Font::Heading,m.width))+Dp(m.width,dashboard?8:0);
   if(dashboard) y+=Dp(m.width,28);
-  return y+Dp(m.width,20);
+  return y+Dp(m.width,dashboard?20:12);
 }
 inline void Chip(Canvas& c,const Metrics& m,int x,int y,const std::string& label,const Palette& p) {
   int height=Dp(m.width,28),pad=Dp(m.width,12);
@@ -272,7 +283,7 @@ inline int DrawHeader(Canvas& c,const Metrics& m,int top,bool back,bool back_sel
   } else {
     Label(c,m,m.inset,y,m.width-2*m.inset,fastboot?"Fastboot":page,title,p.text,true);
   }
-  y+=LineHeight(FontPixels(title,m.width))+Dp(m.width,8);
+  y+=LineHeight(FontPixels(title,m.width))+Dp(m.width,dashboard?8:0);
   if(dashboard) {
     auto info=ReadDeviceInfo(details);
     int x=m.inset;
@@ -284,7 +295,7 @@ inline int DrawHeader(Canvas& c,const Metrics& m,int top,bool back,bool back_sel
     if(!info.slot.empty()) Chip(c,m,x,y,Tr("Slot ")+FitText(info.slot,Dp(m.width,40),FontPixels(Font::Small,m.width),true),p);
     y+=Dp(m.width,28);
   }
-  return y+Dp(m.width,20);
+  return HeaderBottom(m,top,dashboard);
 }
 inline void DrawBattery(Canvas& c,const Metrics& m,int top,int capacity,bool charging,const Palette& p) {
   std::string value=capacity>=0 && capacity<=100?std::to_string(capacity)+"%":"--%";
@@ -294,12 +305,73 @@ inline void DrawBattery(Canvas& c,const Metrics& m,int top,int capacity,bool cha
   Rounded(c,b,b.h/2,p.surface);
   c.Text(b.x+Dp(m.width,12),b.y+Dp(m.width,7),value,Font::Small,capacity>=0 && capacity<=15?p.error:p.secondary,true);
 }
-inline int DrawPrompt(Canvas& c,const Metrics& m,int y,const std::vector<std::string>& lines,const Palette& p) {
-  int font=FontPixels(Font::Body,m.width),lh=LineHeight(font)+Dp(m.width,4);
-  for(const auto& line:lines) for(const auto& wrapped:WrapText(Tr(line),m.width-2*m.inset,font)) {
-    c.Text(m.inset,y,wrapped,Font::Body,p.secondary,false);y+=lh;
+enum class AlertLevel { Auto, Info, Success, Warning, Error };
+inline Color AlertAccent(AlertLevel level,const Palette& p) {
+  switch(level) {
+    case AlertLevel::Error: return p.error;
+    case AlertLevel::Warning: return p.alert_warning;
+    case AlertLevel::Success: return p.alert_success;
+    default: return p.alert_info;
   }
-  return y+(!lines.empty()?Dp(m.width,16):0);
+}
+// Classify original prompt headers before translation, never arbitrary filename substrings.
+inline AlertLevel PromptLevel(const std::vector<std::string>& lines) {
+  AlertLevel level=AlertLevel::Info;
+  for(const auto& line:lines) {
+    auto start=line.find_first_not_of(" \t");
+    if(start==std::string::npos) continue;
+    auto text=line.substr(start);
+    if(text.rfind("ERROR:",0)==0 || text.rfind("Error:",0)==0 ||
+       text.rfind("Can't load Android system.",0)==0 ||
+       text=="Signature verification failed" || text=="WARNING: Previous installation has failed.")
+      return AlertLevel::Error;
+    if(text.rfind("WARNING:",0)==0 || text.rfind("Warning:",0)==0 ||
+       text=="Format user data?" || text=="Format cache?" || text=="Format system?" ||
+       text=="THIS CANNOT BE UNDONE!" || text=="THIS CAN NOT BE UNDONE!" ||
+       text=="This package will downgrade your system" || text=="Overwrite in-progress update?")
+      level=AlertLevel::Warning;
+    else if(level==AlertLevel::Info &&
+            (text.rfind("SUCCESS:",0)==0 || text.rfind("Success:",0)==0))
+      level=AlertLevel::Success;
+  }
+  return level;
+}
+// Non-interactive inline alert. Returned height drives the real menu viewport and hit targets.
+inline int DrawPrompt(Canvas& c,const Metrics& m,int y,const std::vector<std::string>& lines,const Palette& p,
+                      AlertLevel level=AlertLevel::Auto) {
+  int pad=Dp(m.width,16),vertical_pad=Dp(m.width,14),rail=std::max(1,Dp(m.width,4));
+  int font=FontPixels(Font::Body,m.width),lh=LineHeight(font),spacing=Dp(m.width,3);
+  int available=m.width-2*m.inset-2*pad-rail;
+  std::vector<std::string> rows;
+  for(const auto& line:lines) {
+    if(line.empty()) continue;
+    for(const auto& wrapped:WrapText(Tr(line),available,font,false)) rows.push_back(wrapped);
+  }
+  if(rows.empty()) return y;
+  if(level==AlertLevel::Auto) level=PromptLevel(lines);
+  Color accent=AlertAccent(level,p);
+  Color background=CompositeOver(accent,p.background,p.alert_opacity);
+  Color foreground=p.text;
+  int text_height=static_cast<int>(rows.size())*lh+(static_cast<int>(rows.size())-1)*spacing;
+  Rect box{m.inset,y,m.width-2*m.inset,2*vertical_pad+text_height};
+  int radius=std::min(Dp(m.width,12),std::min(box.w,box.h)/2);
+  Rounded(c,box,radius,background);
+  // Clip the full-height accent rail to the same rounded outline as the fill.
+  c.Fill({box.x,box.y+radius,rail,box.h-2*radius},accent);
+  for(int dy=0;dy<radius;++dy) {
+    double distance=radius-dy-0.5;
+    int dx=static_cast<int>(std::ceil(radius-std::sqrt(radius*radius-distance*distance)-0.5));
+    if(dx<rail) {
+      c.Fill({box.x+dx,box.y+dy,rail-dx,1},accent);
+      c.Fill({box.x+dx,box.y+box.h-1-dy,rail-dx,1},accent);
+    }
+  }
+  int ty=box.y+vertical_pad,tx=box.x+rail+pad;
+  for(const auto& row:rows) {
+    c.Text(tx,ty,row,Font::Body,foreground,false);
+    ty+=lh+spacing;
+  }
+  return box.y+box.h+Dp(m.width,12);
 }
 inline void DrawFooter(Canvas& c,const Metrics& m,int y,int bottom,const std::vector<std::string>& details,
                       bool,bool,const std::vector<std::string>& logs,const Palette& p) {
