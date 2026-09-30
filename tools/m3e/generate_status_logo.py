@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate minui-compatible status logos from the pinned user-selected artwork."""
+"""Generate minui-compatible status/header logos from the pinned artwork."""
 
 import argparse
 import hashlib
@@ -29,14 +29,18 @@ def generate(out: Path) -> None:
     for density, scale in DENSITIES.items():
         width = round(spec["display_width_dp"] * scale)
         height = round(width * art.height / art.width)
-        resized = art.resize((width, height), Image.Resampling.LANCZOS)
-        # minui display surfaces accept RGB, not RGBA; gr_blit does not alpha blend.
-        background = Image.new("RGBA", resized.size, tuple(spec["background"]) + (255,))
-        rgb = Image.alpha_composite(background, resized).convert("RGB")
-        target = out / f"res-{density}" / "images" / "uwu_recovery_status.png"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        rgb.save(target, optimize=True)
-        print(f"{target}: {width}x{height} RGB")
+        header_height = round(spec["header_height_dp"] * scale)
+        header_width = round(header_height * art.width / art.height)
+        for name, size in (("uwu_recovery_status", (width, height)),
+                           ("uwu_recovery_header", (header_width, header_height))):
+            resized = art.resize(size, Image.Resampling.LANCZOS)
+            # minui display surfaces accept RGB; gr_blit does not alpha blend.
+            background = Image.new("RGBA", size, tuple(spec["background"]) + (255,))
+            rgb = Image.alpha_composite(background, resized).convert("RGB")
+            target = out / f"res-{density}" / "images" / (name + ".png")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            rgb.save(target, optimize=True)
+            print(f"{target}: {size[0]}x{size[1]} RGB")
 
 
 if __name__ == "__main__":

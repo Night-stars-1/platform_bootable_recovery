@@ -1201,6 +1201,7 @@ bool ScreenRecoveryUI::Init(const std::string& locale) {
   recovery_m3e::SetLanguage(recovery_m3e::LanguageForLocale(locale));
 
   status_logo_ = LoadBitmap("uwu_recovery_status");
+  install_header_logo_ = LoadBitmap("uwu_recovery_header");
   if (!status_logo_) {
     // Preserve the upstream graphics when a device supplies its own resource set.
     error_icon_ = LoadBitmap("icon_error");
@@ -1361,12 +1362,13 @@ void ScreenRecoveryUI::DrawInstallPageLocked() {
   int top = std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
   int bottom = ScreenHeight() - top;
   int rows = menu_ ? std::min<size_t>(2, menu_->ItemsCount()) : 0;
+  auto logo = recovery_m3e::InstallHeaderLogo(m, top, bottom, rows,
+      gr_get_width(install_header_logo_.get()), gr_get_height(install_header_logo_.get()));
   int y = recovery_m3e::DrawInstallHeader(canvas, m, top, bottom, rows,
-      menu_ && menu_->selection() == -1, title_lines_, palette);
-  auto layout = recovery_m3e::InstallationLayout(m, y, bottom, rows,
-      gr_get_width(status_logo_.get()), gr_get_height(status_logo_.get()));
-  if (layout.logo.w > 0) {
-    DrawSurface(status_logo_.get(), 0, 0, layout.logo.w, layout.logo.h, layout.logo.x, layout.logo.y);
+      menu_ && menu_->selection() == -1, title_lines_, palette, logo);
+  auto layout = recovery_m3e::InstallationLayout(m, y, bottom, rows);
+  if (logo.w > 0) {
+    DrawSurface(install_header_logo_.get(), 0, 0, logo.w, logo.h, logo.x, logo.y);
   }
   double fraction = progressScopeStart + progress * progressScopeSize;
   recovery_m3e::DrawInstallPanel(canvas, m, layout.panel, m3e_install_stage_, fraction,

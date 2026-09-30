@@ -31,7 +31,13 @@ OTA 安装、签名校验、擦除确认等逻辑沿用上游实现。
 成功、失败和未收到包分别使用绿色、红色和橙色状态，结果页可继续返回菜单或查看完整恢复日志。
 安装页面支持简体中文 / English；日志原文保留。
 
-![安装流程预览（原生 C++ 主机渲染，非手机截图）](tools/m3e/preview/install-flow-zh.png)
+安装页 Logo 缩小后放在顶部 `uwuAOSP` 品牌位置，和返回键、电量处于同一栏。
+安装标题下方直接显示状态卡片，不再为大插画预留空间。
+
+![安装页头布局预览（合成示意，非手机截图）](tools/m3e/preview/install-header-flow-zh.png)
+
+此页头预览复用此前原生渲染的卡片，按新位置合成；本次未执行 C++ 或 Android 编译。
+下方原生检查工具已同步新布局，重编译后的实际显示仍由构建与设备验证。
 
 这条渲染路径在交互式 `show_text=true` 时也生效，解决原先等待菜单关闭后回退到文本控制台的问题。
 进度沿用后端 `progressScopeStart + progress * progressScopeSize`，不是单独的 ADB 传输百分比；
@@ -40,7 +46,8 @@ OTA 安装、签名校验、擦除确认等逻辑沿用上游实现。
 
 菜单安装和 `adb reboot sideload` 均可显示结果；`sideload-auto-reboot` 保持上游自动重启语义。
 文件安装复用同一校验/安装页面，能否读取内部存储和支持何种 ZIP 仍由现有挂载、解密及安装后端决定。
-小屏及横屏空间不足时缩短页头、隐藏插画，优先保证状态文案和按钮可见。
+小屏及横屏空间不足时使用紧凑文字页头，优先保证状态文案和按钮可见。
+缺少页头 Logo 或自定义图片超出栏位时回退到品牌文字，不裁切图片或挤占电量区域。
 
 页面由 `recovery_ui/include/recovery_ui/m3e_install.h` 绘制，阶段接口在 `install_status.h`；
 `install/adb_install.cpp`、`install/install.cpp` 和 `recovery.cpp` 负责更新阶段与展示结果。
@@ -65,7 +72,8 @@ python3 tools/m3e/test_install_ui.py --out /tmp/m3e-install-preview
 ![状态页预览（主机资源渲染，非手机截图）](tools/m3e/preview/status-preview.png)
 
 原图、来源与 SHA-256 保存在 `tools/m3e/assets/`。生成器仅去除外围透明留白、
-按原比例生成 200dp 宽的五档密度资源，并合成到状态页原有黑色背景；minui 的
+按原比例生成 200dp 宽的旧状态页资源和 40dp 高的安装页头资源（均有五档密度），
+并合成到状态页原有黑色背景；minui 的
 display surface 不接受 RGBA，因此提交的显示资源使用 8-bit RGB PNG。
 缺少新图标的自定义资源集仍回退到上游动画和错误图标。
 

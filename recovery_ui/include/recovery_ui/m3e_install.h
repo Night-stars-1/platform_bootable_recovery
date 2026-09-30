@@ -5,16 +5,30 @@
 
 namespace recovery_m3e {
 using InstallStage = recovery_ui::InstallStage;
-struct InstallLayout { Rect logo, panel; int menu_y; };
+struct InstallLayout { Rect panel; int menu_y; };
 
 inline int InstallButtonSpace(const Metrics& m,int rows) {
   return rows>0?rows*m.row_height+(rows-1)*m.gap+Dp(m.width,16):0;
 }
+inline bool CompactInstallHeader(const Metrics& m,int top,int bottom,int menu_rows) {
+  return bottom-HeaderBottom(m,top,false)-InstallButtonSpace(m,menu_rows)<Dp(m.width,188);
+}
+inline Rect InstallHeaderLogo(const Metrics& m,int top,int bottom,int menu_rows,
+                              int logo_width,int logo_height) {
+  auto back=BackBounds(m,top);
+  int x=m.inset+(menu_rows>0?back.w+Dp(m.width,12):0);
+  // Keep the brand inside the app bar, clear of the battery and back hit target.
+  int available=m.width-m.inset-Dp(m.width,90)-x;
+  if(CompactInstallHeader(m,top,bottom,menu_rows) || logo_width<=0 || logo_height<=0 ||
+     logo_width>available || logo_height>back.h) return {0,0,0,0};
+  return {x,top+(back.h-logo_height)/2,logo_width,logo_height};
+}
 inline int DrawInstallHeader(Canvas& c,const Metrics& m,int top,int bottom,int menu_rows,
                              bool back_selected,const std::vector<std::string>& details,
-                             const Palette& p) {
-  if(bottom-HeaderBottom(m,top,false)-InstallButtonSpace(m,menu_rows)>=Dp(m.width,188)) {
-    return DrawHeader(c,m,top,menu_rows>0,back_selected,false,0,0,details,p,"Install update",false);
+                             const Palette& p,Rect logo={0,0,0,0}) {
+  if(!CompactInstallHeader(m,top,bottom,menu_rows)) {
+    return DrawHeader(c,m,top,menu_rows>0,back_selected,false,0,0,details,p,"Install update",false,
+                      logo.w==0);
   }
   // Keep both result actions reachable on landscape/compact displays. The back hit area
   // stays identical to the regular header used by ScreenRecoveryUI::SelectMenu.
@@ -29,20 +43,13 @@ inline int DrawInstallHeader(Canvas& c,const Metrics& m,int top,int bottom,int m
   return top+back.h+Dp(m.width,12);
 }
 
-inline InstallLayout InstallationLayout(const Metrics& m,int top,int bottom,int menu_rows,
-                                         int logo_width,int logo_height) {
+inline InstallLayout InstallationLayout(const Metrics& m,int top,int bottom,int menu_rows) {
   int gap=Dp(m.width,16);
   int buttons=InstallButtonSpace(m,menu_rows);
   int available=std::max(0,bottom-top-buttons);
   int panel_height=std::min(Dp(m.width,188),available);
-  Rect logo{0,0,0,0};
-  if(logo_width>0 && logo_height>0 && logo_width<=m.width-2*m.inset &&
-     available>=panel_height+logo_height+gap) {
-    logo={(m.width-logo_width)/2,top,logo_width,logo_height};
-    top+=logo_height+gap;
-  }
   Rect panel{m.inset,top,m.width-2*m.inset,panel_height};
-  return {logo,panel,top+panel_height+gap};
+  return {panel,top+panel_height+gap};
 }
 
 inline const char* InstallTitle(InstallStage stage,bool security_update) {
