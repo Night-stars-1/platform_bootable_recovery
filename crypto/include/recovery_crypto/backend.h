@@ -11,8 +11,9 @@
 extern "C" {
 #endif
 
-// Implement this ABI in a Recovery-only device-tree module with the installed
-// stem librecovery_crypto_backend. No device source belongs in bootable/recovery.
+// A product may select the generic Android 17 backend or implement this ABI in
+// a Recovery-only device-tree module. Install exactly one with stem
+// librecovery_crypto_backend. Device-specific sources stay outside this project.
 #define RECOVERY_CRYPTO_BACKEND_ABI 1u
 #define RECOVERY_CRYPTO_MAX_CREDENTIAL 128u
 

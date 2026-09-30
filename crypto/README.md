@@ -1,20 +1,24 @@
 # Optional Recovery storage decryption
 
-This is the optional **backend integration layer**, not a completed Android 17
-Synthetic Password/vold implementation. No functioning device backend is
-included or enabled. Android compilation and on-device decryption have not been
-validated. Installing the example does not unlock storage; it reports unsupported.
+This repository contains the optional **backend integration layer** and an opt-in
+[Android 17 existing-key backend implementation](android17/README.md). The latter
+implements metadata, DE, Synthetic Password and CE recovery for reviewed formats
+but is disabled by default. Neither Android compilation nor on-device decryption
+has been validated. No tested device profile is included or enabled.
+Installing the old callback example does not unlock storage; it reports unsupported.
 
 The implementation provides isolated backend execution, bounded IPC, credential
 selection, staged unlock orchestration, independent fscrypt key verification,
 and access to the existing ZIP installer. It does not parse stored SP blobs,
 restore metadata/DE/CE keys, start vendor HALs, or bypass authentication itself.
-Those operations require an Android-version-compatible backend. Keep this
-distinction when documenting a fork or publishing images.
+Those operations are provided by a separate Android-version-compatible backend,
+such as the optional implementation in `android17/`. Keep the framework/backend
+and source-implementation/device-validation distinctions when publishing images.
 
-This API is intended for Android 17 integration but is not a compatibility
-certificate. In particular, the supplied backend example has no cryptographic
-operations and must not be enabled in a released device configuration.
+This API is not a compatibility certificate. In particular, the supplied backend
+example in `examples/` has no cryptographic operations and must not be enabled
+in a released device configuration. The actual `android17/` backend has format
+and hardware limits documented separately and requires a reviewed device profile.
 
 ## Device-independent packaging
 
@@ -43,6 +47,12 @@ passwords are accepted locally using Recovery's touch/key menu; this is not a
 full touchscreen keyboard, and non-ASCII passwords need an input extension.
 
 ## Backend registration
+
+For the supported Android 17 formats, use the implementation, dependency helper
+and device-tree packaging templates documented in [android17/README.md](android17/README.md).
+That path needs no custom decryption callbacks for each device: the shared
+implementation stays here and the device supplies configuration/HAL packaging.
+The steps below are for a separate platform/vendor backend using the public ABI.
 
 1. Copy `examples/backend.cpp.example` and `examples/Android.bp.example` into
    your device tree as `backend.cpp` and `Android.bp`. Replace the unsupported
