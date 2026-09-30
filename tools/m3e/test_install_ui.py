@@ -139,10 +139,13 @@ def run(cxx, out, ndk_clang=None):
         env = os.environ.copy()
         if Path(cxx).is_absolute():
             env['PATH'] = str(Path(cxx).parent) + os.pathsep + env.get('PATH', '')
+        with Image.open(ROOT / 'res-xxxhdpi/images/uwu_recovery_status.png') as logo:
+            logo.convert('RGB').save(build / 'logo.ppm')
         subprocess.run([str(exe), str(build)], check=True, env=env)
         if ndk_clang:
             compile_android(ndk_clang, build)
-        names = ('waiting', 'verifying', 'installing', 'success', 'error', 'cancelled')
+        # Cancellation is checked above but returns to the menu, without a result page.
+        names = ('waiting', 'verifying', 'installing', 'success', 'error')
         for locale in ('zh', 'en'):
             tile_w, tile_h, gap = 300, 667, 20
             sheet = Image.new('RGB', (3 * (tile_w + gap) + gap, 2 * (tile_h + 42) + 96), '#f1eef8')
