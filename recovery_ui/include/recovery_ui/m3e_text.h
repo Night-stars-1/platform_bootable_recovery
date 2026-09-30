@@ -13,7 +13,20 @@
 #include <vector>
 namespace recovery_m3e {
 enum class Font { Body, Menu, Title, Small, Heading };
-inline int Dp(int width, float dp) { return std::max(1, static_cast<int>(std::lround(width * dp / 360.f))); }
+// Scale basis: the shorter screen side, set once the framebuffer size is known.
+// Layout widths stay full-screen; only dp scaling is capped, so portrait screens
+// (basis == width) are unchanged while landscape and tablet screens scale by
+// their height instead of growing with the long side. 0 means unset.
+inline int& ScaleBasisStorage() { static int basis = 0; return basis; }
+inline void SetScaleBasis(int width, int height) { ScaleBasisStorage() = std::max(0, std::min(width, height)); }
+// Width used for dp scaling: never wider than the basis.
+inline int ScaleWidth(int width) {
+  int basis = ScaleBasisStorage();
+  return basis > 0 ? std::min(width, basis) : width;
+}
+inline int Dp(int width, float dp) {
+  return std::max(1, static_cast<int>(std::lround(ScaleWidth(width) * dp / 360.f)));
+}
 inline int FontPixels(Font font, int width) {
   switch(font) {
     case Font::Small: return Dp(width,12);

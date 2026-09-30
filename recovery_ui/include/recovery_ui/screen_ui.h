@@ -375,12 +375,15 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   // For Lid switch handle
   int SetSwCallback(int code, int value) override;
 
+  // Screen width capped to the M3E scale basis (the shorter screen side).
+  int M3eScaleWidth() const;
+
   int MenuItemHeight() const override {
-    return std::max(1, (ScreenWidth() * 76 + 180) / 360);
+    return std::max(1, (M3eScaleWidth() * 76 + 180) / 360);
   }
 
   int MenuItemSpacing() const override {
-    return std::max(1, (ScreenWidth() * 8 + 180) / 360);
+    return std::max(1, (M3eScaleWidth() * 8 + 180) / 360);
   }
 
  protected:

@@ -750,6 +750,10 @@ int ScreenRecoveryUI::ScreenWidth() const {
   return gr_fb_width();
 }
 
+int ScreenRecoveryUI::M3eScaleWidth() const {
+  return recovery_m3e::ScaleWidth(ScreenWidth());
+}
+
 int ScreenRecoveryUI::ScreenHeight() const {
   return gr_fb_height();
 }
@@ -896,6 +900,12 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(const std::vector<std::s
     y += menu_->DrawHeader(m.inset, y);
     menu_start_y_ = y;
     m3e_menu_bottom_ = bottom - footer;
+    // Short (landscape/tablet) screens: give the footer's space to the menu rather than
+    // show fewer than two items. DrawFooter skips whatever no longer fits below them.
+    if (recovery_m3e::VisibleCount(m3e_menu_bottom_ - menu_start_y_, MenuItemHeight(),
+                                   MenuItemSpacing()) < 2) {
+      m3e_menu_bottom_ = bottom;
+    }
     menu_->SetViewport(ScreenWidth(), std::max(0, m3e_menu_bottom_ - menu_start_y_));
     y += menu_->DrawItems(m.inset, y, ScreenWidth(), IsLongPress());
     std::vector<std::string> recent;
@@ -1159,6 +1169,9 @@ bool ScreenRecoveryUI::Init(const std::string& locale) {
     gr_fb_blank(true);
     gr_fb_blank(false);
   }
+
+  // Scale M3E dp values by the shorter side so landscape/tablet screens stay proportional.
+  recovery_m3e::SetScaleBasis(gr_fb_width(), gr_fb_height());
 
   // Are we portrait or landscape?
   layout_ = (gr_fb_width() > gr_fb_height()) ? LANDSCAPE : PORTRAIT;
