@@ -67,9 +67,22 @@ void Render(const std::string& out,int w,int h,bool zh,int index,bool pixels=fal
   auto stage=stages[index];int rows=stage==InstallStage::WAITING?1:index>=3?2:0;
   int top=Dp(w,24),bottom=h-top;
   int y=DrawInstallHeader(c,m,top,bottom,rows,false,{},p);
-  auto layout=InstallationLayout(m,y,bottom,rows);
+  int logo_width=pixels?800:Dp(w,200),logo_height=pixels?568:Dp(w,142);
+  auto layout=InstallationLayout(m,y,bottom,rows,logo_width,logo_height);
   assert(layout.panel.y>=y && layout.panel.y+layout.panel.h<=bottom);
-  assert(layout.panel.y==y); // No illustration or empty illustration gap above the panel.
+  if(layout.logo.w) {
+    assert(layout.logo.x==(w-logo_width)/2 && layout.logo.y==y);
+    assert(layout.panel.y==y+logo_height+Dp(w,16));
+    if(pixels)c.Blit(out+"/logo.ppm",layout.logo);
+  } else {
+    assert(layout.panel.y==y); // No empty gap when the bitmap cannot fit.
+  }
+  auto without_logo=InstallationLayout(m,y,bottom,rows);
+  assert(without_logo.logo.w==0 && without_logo.panel.y==y);
+  auto oversized=InstallationLayout(m,y,bottom,rows,w+1,h+1);
+  assert(oversized.logo.w==0 && oversized.panel.y==y);
+  assert(layout.panel.h==without_logo.panel.h); // Artwork cannot reduce readable status space.
+  if(w==1220 && h==2712)assert(layout.logo.w>0);
   if(!CompactInstallHeader(m,top,bottom,rows)) {
     assert(c.Has("uwuAOSP"));
   }
@@ -130,5 +143,5 @@ int main(int argc,char** argv) {
         {320,480},{1280,720},{320,240},{1600,2560}})
     for(bool zh:{false,true})for(int i=0;i<6;++i)Render(out,w,h,zh,i);
   for(bool zh:{false,true})for(int i=0;i<6;++i)Render(out,1220,2712,zh,i,true);
-  std::cout<<"PASS: six stages, two languages, seven screen sizes, text header, progress and touch geometry\n";
+  std::cout<<"PASS: six stages, two languages, seven screen sizes, centered artwork with compact fallback, progress and touch geometry\n";
 }

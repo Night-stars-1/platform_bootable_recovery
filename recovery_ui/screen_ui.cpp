@@ -1364,7 +1364,12 @@ void ScreenRecoveryUI::DrawInstallPageLocked() {
   int rows = menu_ ? std::min<size_t>(2, menu_->ItemsCount()) : 0;
   int y = recovery_m3e::DrawInstallHeader(canvas, m, top, bottom, rows,
       menu_ && menu_->selection() == -1, title_lines_, palette);
-  auto layout = recovery_m3e::InstallationLayout(m, y, bottom, rows);
+  auto layout = recovery_m3e::InstallationLayout(m, y, bottom, rows,
+      gr_get_width(status_logo_.get()), gr_get_height(status_logo_.get()));
+  if (layout.logo.w > 0) {
+    DrawSurface(status_logo_.get(), 0, 0, layout.logo.w, layout.logo.h,
+        layout.logo.x, layout.logo.y);
+  }
   double fraction = progressScopeStart + progress * progressScopeSize;
   recovery_m3e::DrawInstallPanel(canvas, m, layout.panel, m3e_install_stage_, fraction,
       progressBarType == DETERMINATE && progressScopeSize > 0, m3e_security_update_,

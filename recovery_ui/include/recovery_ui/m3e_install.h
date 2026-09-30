@@ -8,7 +8,7 @@
 
 namespace recovery_m3e {
 using InstallStage = recovery_ui::InstallStage;
-struct InstallLayout { Rect panel; int menu_y; };
+struct InstallLayout { Rect logo, panel; int menu_y; };
 
 inline int InstallButtonSpace(const Metrics& m,int rows) {
   return rows>0?rows*m.row_height+(rows-1)*m.gap+Dp(m.width,16):0;
@@ -35,13 +35,21 @@ inline int DrawInstallHeader(Canvas& c,const Metrics& m,int top,int bottom,int m
   return top+back.h+Dp(m.width,12);
 }
 
-inline InstallLayout InstallationLayout(const Metrics& m,int top,int bottom,int menu_rows) {
+inline InstallLayout InstallationLayout(const Metrics& m,int top,int bottom,int menu_rows,
+                                         int logo_width=0,int logo_height=0) {
   int gap=Dp(m.width,16);
   int buttons=InstallButtonSpace(m,menu_rows);
   int available=std::max(0,bottom-top-buttons);
   int panel_height=std::min(Dp(m.width,188),available);
+  Rect logo{0,0,0,0};
+  // Never shrink the status card or hide result actions to make room for artwork.
+  if(logo_width>0 && logo_height>0 && logo_width<=m.width-2*m.inset &&
+     logo_height<=available-panel_height-gap) {
+    logo={(m.width-logo_width)/2,top,logo_width,logo_height};
+    top+=logo_height+gap;
+  }
   Rect panel{m.inset,top,m.width-2*m.inset,panel_height};
-  return {panel,top+panel_height+gap};
+  return {logo,panel,top+panel_height+gap};
 }
 
 inline const char* InstallTitle(InstallStage stage,bool security_update) {
