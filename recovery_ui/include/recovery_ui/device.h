@@ -31,12 +31,6 @@ class BootState;
 
 class Device {
  public:
-  enum class MenuType {
-    TEXT,
-    CARD_HOME,
-    CARD_POWER,
-  };
-
   static constexpr const int kNoAction = -1;
   static constexpr const int kHighlightUp = -2;
   static constexpr const int kHighlightDown = -3;
@@ -82,9 +76,6 @@ class Device {
     MENU_BASE = 200,
     MENU_WIPE = 202,
     MENU_ADVANCED = 203,
-    MENU_CARD_HOME = 204,
-    MENU_CARD_POWER = 205,
-    MENU_TEXT_HOME = 206,
   };
 
   explicit Device(RecoveryUI* ui);
@@ -141,9 +132,6 @@ class Device {
 
   // Returns headers for the currently visible menu. Can be empty vector.
   virtual const std::vector<std::string>& GetMenuHeaders();
-
-  virtual const std::vector<std::string>& GetMenuIcons();
-  virtual MenuType GetMenuType() const;
 
   // Return to the main menu
   virtual void GoHome();
