@@ -539,8 +539,10 @@ int main(int argc, char** argv) {
         fastboot ? "fastboot" : IsRoDebuggable() || IsDeviceUnlocked() ? "adb" : "none";
     std::string usb_state = android::base::GetProperty("sys.usb.state", "none");
     if (fastboot) {
+      ui->SetEnableFastbootdLogo(true);
       device->PreFastboot();
     } else {
+      ui->SetEnableFastbootdLogo(false);
       device->PreRecovery();
     }
     if (usb_config != usb_state) {
