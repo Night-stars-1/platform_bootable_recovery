@@ -71,6 +71,19 @@ parts += ['  {'+json.dumps(k,ensure_ascii=False)+','+json.dumps(v,ensure_ascii=F
 parts += ['};', '''inline std::string Tr(const std::string& text) {
   if(GetLanguage()!=Language::Chinese) return text;
   for(const auto& entry:kTranslations) if(text==entry.key) return std::string(entry.chinese);
+  for(const auto& entry:kTranslations) {
+    size_t token=entry.key.find("%d");
+    if(token==std::string_view::npos) continue;
+    std::string prefix(entry.key.substr(0,token)),suffix(entry.key.substr(token+2));
+    if(text.size()<=prefix.size()+suffix.size() || text.compare(0,prefix.size(),prefix)!=0 ||
+        text.compare(text.size()-suffix.size(),suffix.size(),suffix)!=0) continue;
+    std::string number=text.substr(prefix.size(),text.size()-prefix.size()-suffix.size());
+    if(number.find_first_not_of("0123456789")!=std::string::npos) continue;
+    std::string translated(entry.chinese);
+    size_t placeholder=translated.find("%d");
+    if(placeholder!=std::string::npos) translated.replace(placeholder,2,number);
+    return translated;
+  }
   size_t start=text.find_first_not_of(" "),end=text.find_last_not_of(" ");
   if(start!=std::string::npos) {
     std::string trimmed=text.substr(start,end-start+1);

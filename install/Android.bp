@@ -106,6 +106,7 @@ cc_library_static {
 
     srcs: [
         "adb_install.cpp",
+        "crypto.cpp",
         "fuse_install.cpp",
         "virtiofs_install.cpp",
         "install.cpp",
@@ -119,6 +120,8 @@ cc_library_static {
         "libminadbd_headers",
         "libupdate_engine_headers",
     ],
+
+    static_libs: ["librecovery_crypto"],
 
     shared_libs: [
         "librecovery_ui",
