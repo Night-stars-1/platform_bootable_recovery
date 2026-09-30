@@ -484,6 +484,26 @@ static bool AskToReboot(Device* device, Device::BuiltinAction chosen_action) {
   return (chosen_item == 1);
 }
 
+// Keep the result visible until the user returns to the menu or opens the complete log.
+static void ShowInstallResult(Device* device, InstallResult result) {
+  auto ui = device->GetUI();
+  auto stage = result == INSTALL_SUCCESS ? RecoveryUI::InstallStage::SUCCESS
+               : result == INSTALL_NONE ? RecoveryUI::InstallStage::CANCELLED
+                                        : RecoveryUI::InstallStage::ERROR;
+  ui->SetInstallStage(stage);
+  while (ui->IsTextVisible()) {
+    size_t selected = ui->ShowMenu({ "Install result" }, { "Continue", "View recovery logs" },
+        0, true, std::bind(&Device::HandleMenuKey, device, std::placeholders::_1, std::placeholders::_2));
+    if (selected != 1) break;
+    // The file viewer retains its full, scrollable upstream text display.
+    ui->SetInstallStage(RecoveryUI::InstallStage::NONE);
+    fflush(stdout);
+    ui->ShowFile(Paths::Get().temporary_log_file());
+    ui->SetInstallStage(stage);
+  }
+  ui->SetInstallStage(RecoveryUI::InstallStage::NONE);
+}
+
 // Shows the recovery UI and waits for user input. Returns one of the device builtin actions, such
 // as REBOOT, SHUTDOWN, or REBOOT_BOOTLOADER. Returning NO_ACTION means to take the default, which
 // is to reboot or shutdown depending on if the --shutdown_after flag was passed to recovery.
@@ -491,6 +511,7 @@ static Device::BuiltinAction PromptAndWait(Device* device, InstallResult status)
   auto ui = device->GetUI();
   bool update_in_progress = (device->GetReason().value_or("") == "update_in_progress");
   for (;;) {
+    ui->SetInstallStage(RecoveryUI::InstallStage::NONE);
     FinishRecovery(ui);
     switch (status) {
       case INSTALL_SUCCESS:
@@ -637,10 +658,15 @@ change_menu:
           if (!ui->IsTextVisible()) {
             return Device::NO_ACTION;  // reboot if logs aren't visible
           }
+        } else if (status == INSTALL_NONE) {
+          ui->Print("Installation cancelled or no package received.\n");
         } else {
           ui->SetBackground(RecoveryUI::ERROR);
           ui->Print("Installation aborted.\n");
           copy_logs(save_current_log);
+        }
+        if (chosen_action != Device::ENTER_RESCUE && ui->IsTextVisible()) {
+          ShowInstallResult(device, status);
         }
         break;
       }
@@ -1027,6 +1053,8 @@ Device::BuiltinAction start_recovery(Device* device, const std::vector<std::stri
     if (sideload_auto_reboot) {
       status = INSTALL_REBOOT;
       ui->Print("Rebooting automatically.\n");
+    } else if (status != INSTALL_REBOOT && status != INSTALL_REBOOT_RECOVERY && ui->IsTextVisible()) {
+      ShowInstallResult(device, status);
     }
   } else if (rescue) {
     save_current_log = true;

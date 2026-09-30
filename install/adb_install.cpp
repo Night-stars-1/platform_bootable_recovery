@@ -112,6 +112,7 @@ static auto AdbInstallPackageHandler(Device* device, InstallResult* result) {
       }
     }
     ui->CancelWaitKey();
+    ui->SetInstallStage(RecoveryUI::InstallStage::VERIFYING);
 
     auto package =
         Package::CreateFilePackage(FUSE_SIDELOAD_HOST_PATHNAME,
@@ -355,6 +356,7 @@ static void CreateMinadbdServiceAndExecuteCommands(
 }
 
 InstallResult ApplyFromAdb(Device* device, bool rescue_mode, Device::BuiltinAction* reboot_action) {
+  if (!rescue_mode) device->GetUI()->SetInstallStage(RecoveryUI::InstallStage::WAITING);
   // Save the usb state to restore after the sideload operation.
   std::string usb_state = android::base::GetProperty("sys.usb.state", "none");
   // Clean up state and stop adbd.
@@ -387,6 +389,7 @@ InstallResult ApplyFromAdb(Device* device, bool rescue_mode, Device::BuiltinActi
         "to the device with \"adb sideload <filename>\"...\n");
   } else {
     command_map.emplace(MinadbdCommand::kWipeData, [&device]() {
+      device->GetUI()->SetInstallStage(RecoveryUI::InstallStage::NONE);
       bool result = WipeData(device);
       return std::make_pair(result, true);
     });

@@ -16,6 +16,7 @@
 
 #include "recovery_ui/screen_ui.h"
 #include "recovery_ui/m3e.h"
+#include "recovery_ui/m3e_install.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -215,6 +216,7 @@ bool TextMenu::DashboardCandidate() const {
 }
 std::string TextMenu::PageTitle() const {
   if (text_headers_.size() == 1) {
+    if (text_headers_[0] == "ADB Sideload" || text_headers_[0] == "Install result") return text_headers_[0];
     if (text_headers_[0] == "Settings" || text_headers_[0] == "Language" ||
         text_headers_[0] == "Reboot options" || text_headers_[0] == "Advanced tools") return text_headers_[0];
     if (text_headers_[0] == "Advanced options") return "Tools";
@@ -227,6 +229,7 @@ std::string TextMenu::PageTitle() const {
   return IsMain() ? "Recovery" : "Confirm or select";
 }
 int TextMenu::DrawHeader(int x, int y) const {
+  if (text_headers_ == std::vector<std::string>{"Install result"}) return 0;
   if (text_headers_.size() == 1 && (text_headers_[0] == "Advanced options" ||
       text_headers_[0] == "Apply update" || text_headers_[0] == "Factory reset" ||
       text_headers_[0] == "Settings" || text_headers_[0] == "Language" ||
@@ -872,6 +875,13 @@ std::vector<std::string> ScreenRecoveryUI::GetMenuHelpMessage() const {
 // Redraws everything on the screen. Does not flip pages. Should only be called with updateMutex
 // locked.
 void ScreenRecoveryUI::draw_screen_locked() {
+  if (IsInstallPageLocked()) {
+    gr_color(0, 0, 0, 255);
+    gr_clear();
+    DrawInstallPageLocked();
+    draw_battery_capacity_locked();
+    return;
+  }
   if (!show_text) {
     draw_background_locked();
     draw_foreground_locked();
@@ -932,7 +942,7 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(const std::vector<std::s
   }
 }
 void ScreenRecoveryUI::draw_battery_capacity_locked() {
-  if (is_battery_less || !menu_) return;
+  if (is_battery_less || (!menu_ && !IsInstallPageLocked())) return;
   M3eCanvas canvas;
   recovery_m3e::Metrics m(ScreenWidth());
   int top = std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
@@ -950,7 +960,7 @@ void ScreenRecoveryUI::update_screen_locked() {
 // Updates only the progress bar, if possible, otherwise redraws the screen.
 // Should only be called with updateMutex locked.
 void ScreenRecoveryUI::update_progress_locked() {
-  if (show_text || !pagesIdentical) {
+  if (IsInstallPageLocked() || show_text || !pagesIdentical) {
     draw_screen_locked();  // Must redraw the whole screen
     pagesIdentical = true;
   } else {
@@ -1325,6 +1335,51 @@ void ScreenRecoveryUI::SetBackground(Icon icon) {
   update_screen_locked();
 }
 
+void ScreenRecoveryUI::SetInstallStage(InstallStage stage) {
+  std::lock_guard<std::mutex> lg(updateMutex);
+  if (stage == InstallStage::WAITING || m3e_install_stage_ == InstallStage::NONE) {
+    m3e_install_logs_.clear();
+  }
+  m3e_install_stage_ = stage;
+  update_screen_locked();
+}
+
+bool ScreenRecoveryUI::IsInstallPageLocked() const {
+  if (m3e_install_stage_ == InstallStage::NONE) return false;
+  if (!menu_) return true;
+  // Confirmation menus always take priority over the installation dashboard.
+  const auto title = menu_->PageTitle();
+  return title == "Install result" ||
+      (m3e_install_stage_ == InstallStage::WAITING && title == "ADB Sideload");
+}
+
+void ScreenRecoveryUI::DrawInstallPageLocked() {
+  M3eCanvas canvas;
+  recovery_m3e::Metrics m(ScreenWidth());
+  auto palette = recovery_m3e::Palette::ForMode(false);
+  palette.background = {0, 0, 0};
+  int top = std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
+  int bottom = ScreenHeight() - top;
+  int rows = menu_ ? std::min<size_t>(2, menu_->ItemsCount()) : 0;
+  int y = recovery_m3e::DrawInstallHeader(canvas, m, top, bottom, rows,
+      menu_ && menu_->selection() == -1, title_lines_, palette);
+  auto layout = recovery_m3e::InstallationLayout(m, y, bottom, rows,
+      gr_get_width(status_logo_.get()), gr_get_height(status_logo_.get()));
+  if (layout.logo.w > 0) {
+    DrawSurface(status_logo_.get(), 0, 0, layout.logo.w, layout.logo.h, layout.logo.x, layout.logo.y);
+  }
+  double fraction = progressScopeStart + progress * progressScopeSize;
+  recovery_m3e::DrawInstallPanel(canvas, m, layout.panel, m3e_install_stage_, fraction,
+      progressBarType == DETERMINATE && progressScopeSize > 0, m3e_security_update_,
+      m3e_install_logs_, palette);
+  if (menu_) {
+    menu_start_y_ = layout.menu_y;
+    m3e_menu_bottom_ = bottom;
+    menu_->SetViewport(ScreenWidth(), std::max(0, bottom - menu_start_y_));
+    menu_->DrawItems(m.inset, menu_start_y_, ScreenWidth(), IsLongPress());
+  }
+}
+
 void ScreenRecoveryUI::SetProgressType(ProgressType type) {
   std::lock_guard<std::mutex> lg(updateMutex);
   if (progressBarType != type) {
@@ -1377,6 +1432,14 @@ void ScreenRecoveryUI::PrintV(const char* fmt, bool copy_to_stdout, va_list ap) 
   }
 
   std::lock_guard<std::mutex> lg(updateMutex);
+  if (m3e_install_stage_ != InstallStage::NONE) {
+    for (const auto& line : android::base::Split(str, "\n")) {
+      if (!line.empty()) m3e_install_logs_.push_back(line);
+    }
+    if (m3e_install_logs_.size() > 3) {
+      m3e_install_logs_.erase(m3e_install_logs_.begin(), m3e_install_logs_.end() - 3);
+    }
+  }
   if (text_rows_ > 0 && text_cols_ > 0) {
     for (const char* ptr = str.c_str(); *ptr != '\0'; ++ptr) {
       if (*ptr == '\n' || text_col_ >= text_cols_) {

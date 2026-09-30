@@ -24,6 +24,39 @@ M3E 是一套 Material 3 Expressive 风格的 Recovery 界面，直接在原有 
 返回键逐级返回（从首页打开的重启菜单返回首页，从设置打开则返回设置）。
 OTA 安装、签名校验、擦除确认等逻辑沿用上游实现。
 
+## 图形化安装流程
+
+交互式 ADB sideload 使用实际安装后端驱动的 M3E 页面：等待更新包 → 签名校验 → 安装 → 结果。
+等待时提供 `adb sideload <filename>` 提示和取消按钮；写入期间不显示取消按钮。
+成功、失败和未收到包分别使用绿色、红色和橙色状态，结果页可继续返回菜单或查看完整恢复日志。
+安装页面支持简体中文 / English；日志原文保留。
+
+![安装流程预览（原生 C++ 主机渲染，非手机截图）](tools/m3e/preview/install-flow-zh.png)
+
+这条渲染路径在交互式 `show_text=true` 时也生效，解决原先等待菜单关闭后回退到文本控制台的问题。
+进度沿用后端 `progressScopeStart + progress * progressScopeSize`，不是单独的 ADB 传输百分比；
+后端尚未提供确定进度时只显示短进度标记，不编造百分比。最近输出只作摘要，原始日志仍完整写入。
+签名不匹配、降级等确认菜单优先于进度页面显示。
+
+菜单安装和 `adb reboot sideload` 均可显示结果；`sideload-auto-reboot` 保持上游自动重启语义。
+文件安装复用同一校验/安装页面，能否读取内部存储和支持何种 ZIP 仍由现有挂载、解密及安装后端决定。
+小屏及横屏空间不足时缩短页头、隐藏插画，优先保证状态文案和按钮可见。
+
+页面由 `recovery_ui/include/recovery_ui/m3e_install.h` 绘制，阶段接口在 `install_status.h`；
+`install/adb_install.cpp`、`install/install.cpp` 和 `recovery.cpp` 负责更新阶段与展示结果。
+
+主机检查与预览（Python 3、Pillow、C++17 编译器）：
+
+```bash
+python3 tools/m3e/test_install_ui.py --out /tmp/m3e-install-preview
+# 可用 --cxx /path/to/clang++ 或 CXX 环境变量指定编译器
+# 可加 --ndk-clang /path/to/android-ndk/toolchains/llvm/prebuilt/host/bin/clang++ 检查 arm64 对象编译
+```
+
+测试直接使用共享原生绘制代码，并提取实际页面路由、阶段更新和结果菜单方法进行主机检查，
+覆盖六种状态、两种语言、七种屏幕尺寸、缺失插画、进度边界、按钮区域、确认菜单优先级和查看日志返回。
+预览进度、日志与电量是测试样例。
+
 ## 状态页图标
 
 安装更新、安装安全更新、擦除、错误和无命令页面使用 Jelly10086 / AOSP-VtuberLOGO 的
@@ -44,7 +77,8 @@ python3 tools/m3e/render_status_preview.py
 ```
 
 图标沿用原作者的作品，来源见 `tools/m3e/assets/uwu-Rec-SOURCE.json`；
-本仓库的代码许可不改变该外部图片的权属。状态页已做主机资源与布局检查，仍需重编译 Recovery 验证实机显示。
+本仓库的代码许可不改变该外部图片的权属。上述旧状态页预览展示底层背景图路径；
+交互式安装以“图形化安装流程”中的预览为准。状态页仍需重编译 Recovery 验证实机显示。
 
 ## 语言保存
 
@@ -80,7 +114,7 @@ git status   # 未改动翻译时应无差异
 
 - `generate_font.py`：Roboto ASCII 字形（常规/粗体）→ `m3e_font.h`。
 - `generate_i18n.py`：`translations.json` → `m3e_strings.h`，并按其中用到的非 ASCII 字符
-  从 Noto Sans SC 生成字形子集 → `m3e_cjk.h`。当前 88 项翻译、204 个字形、两种字重。
+  从 Noto Sans SC 生成字形子集 → `m3e_cjk.h`。当前 103 项翻译、220 个字形、两种字重。
 - 字体来源与 SHA-256 见 `tools/m3e/fonts/SOURCE.json`、`NotoSansSC-SOURCE.json`，哈希不符时脚本拒绝运行。
 - 脚本固定使用 Pillow 的 BASIC 布局引擎；否则带 libraqm 的 Pillow 会得到小数字宽，
   导致 `m3e_font.h` 与仓库版本不一致。
@@ -123,8 +157,10 @@ git rebase upstream/uwu-17.0   # 或 merge；冲突多集中在 screen_ui.cpp、
 
 ## 验证状态
 
-生成脚本可从本仓库逐字节重现提交的三个头文件。尚未在本仓库内附带主机测试；
-设备上的完整启动、触摸与 metadata 保存需在各自设备上自行验证。
+生成脚本可从本仓库逐字节重现提交的三个头文件。安装界面的主机检查和预览脚本随仓库提供。
+安装页共享绘制代码及新增 ScreenRecoveryUI 方法已做 Android arm64 对象编译检查
+（NDK API 35，实际类声明，minui 绘图由测试声明替代）；这不等于 Android 17 完整 Recovery 编译或链接。
+设备上的完整启动、触摸、安装交互与 metadata 保存仍需在各自设备上验证。
 
 ## 屏幕适配
 
