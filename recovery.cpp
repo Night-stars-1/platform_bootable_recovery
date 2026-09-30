@@ -246,7 +246,7 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
   std::vector<std::string> items;
 
   const int item_sideload = 0;
-  const int item_virtiofs = 1;
+  int item_virtiofs = -1;
   unsigned int non_storage_items;
   std::vector<VolumeInfo> volumes;
 
@@ -258,7 +258,9 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
     items.clear();
     items.push_back("Apply from ADB");
 
+    item_virtiofs = -1;
     if (InitializeVirtiofs()) {
+      item_virtiofs = static_cast<int>(items.size());
       non_storage_items++;
       items.push_back("Choose from virtiofs");
     }
@@ -280,7 +282,7 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
     if (chosen == Device::kRefresh) {
       continue;
     }
-    if (chosen == Device::kGoBack) {
+    if (chosen == Device::kGoBack || chosen == Device::kGoHome) {
       break;
     }
     if (chosen == static_cast<size_t>(RecoveryUI::KeyError::INTERRUPTED)) {
@@ -289,9 +291,11 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
 
     if (chosen == item_sideload) {
       status = ApplyFromAdb(device, false /* rescue_mode */, reboot_action);
-    } else if (chosen == item_virtiofs && InitializeVirtiofs()) {
+    } else if (item_virtiofs >= 0 && chosen == item_virtiofs) {
       status = ApplyFromVirtiofs(device);
     } else {
+      if (chosen < static_cast<int>(non_storage_items) ||
+          static_cast<size_t>(chosen - non_storage_items) >= volumes.size()) break;
       status = ApplyFromStorage(device, volumes[chosen - non_storage_items]);
     }
     break;

@@ -119,10 +119,54 @@ inline constexpr Translation kTranslations[] = {
   {"You can return to the menu or read the log.","可以返回菜单或查看日志。"},
   {"Open the recovery log for details.","请查看恢复日志了解原因。"},
   {"Cancelled, or no package was received.","操作已取消，或未收到更新包。"},
+  {"Choose ZIP from internal storage","从内部存储选择 ZIP"},
+  {"Unlock internal storage","解锁内部存储"},
+  {"Unlock storage","解锁存储"},
+  {"Delete last character","删除最后一个字符"},
+  {"Clear input","清空输入"},
+  {"Enter your lock-screen PIN","输入锁屏 PIN"},
+  {"Enter your lock-screen password","输入锁屏密码"},
+  {"Select pattern dots in order (1-9, top-left to bottom-right)","按顺序选择图案点（1 至 9，从左上到右下）"},
+  {"Space","空格"},
+  {"Entered characters: %d","已输入字符数：%d"},
+  {"Retry after %d seconds","请等待 %d 秒后重试"},
+  {"Starting storage security services","正在启动存储安全服务"},
+  {"Unlocking metadata encryption","正在解锁元数据加密"},
+  {"Loading device-encrypted keys","正在加载设备加密密钥"},
+  {"Checking credential type","正在检查凭据类型"},
+  {"Unlocking credential-encrypted storage","正在解锁凭据加密存储"},
+  {"Checking internal storage access","正在检查内部存储访问"},
+  {"Unlocking internal storage","正在解锁内部存储"},
+  {"Internal storage is unlocked","内部存储已解锁"},
+  {"Enter the Android lock-screen credential","输入 Android 锁屏凭据"},
+  {"Storage decryption is not configured for this device","此设备尚未适配存储解密"},
+  {"Storage security services are unavailable","存储安全服务不可用"},
+  {"An existing storage key is missing","缺少现有存储密钥"},
+  {"A storage key requires a platform upgrade","存储密钥需要平台升级适配"},
+  {"The credential was not accepted","凭据未通过验证"},
+  {"Too many attempts; wait before trying again","尝试次数过多，请等待后再重试"},
+  {"Storage decryption could not complete","存储解密未能完成"},
+  {"The storage decryption backend is incompatible","存储解密后端不兼容"},
+  {"Storage decryption timed out","存储解密超时"},
+  {"The storage decryption worker stopped","存储解密进程已停止"},
+  {"Internal storage is still locked","内部存储仍未解锁"},
 };
 inline std::string Tr(const std::string& text) {
   if(GetLanguage()!=Language::Chinese) return text;
   for(const auto& entry:kTranslations) if(text==entry.key) return std::string(entry.chinese);
+  for(const auto& entry:kTranslations) {
+    size_t token=entry.key.find("%d");
+    if(token==std::string_view::npos) continue;
+    std::string prefix(entry.key.substr(0,token)),suffix(entry.key.substr(token+2));
+    if(text.size()<=prefix.size()+suffix.size() || text.compare(0,prefix.size(),prefix)!=0 ||
+        text.compare(text.size()-suffix.size(),suffix.size(),suffix)!=0) continue;
+    std::string number=text.substr(prefix.size(),text.size()-prefix.size()-suffix.size());
+    if(number.find_first_not_of("0123456789")!=std::string::npos) continue;
+    std::string translated(entry.chinese);
+    size_t placeholder=translated.find("%d");
+    if(placeholder!=std::string::npos) translated.replace(placeholder,2,number);
+    return translated;
+  }
   size_t start=text.find_first_not_of(" "),end=text.find_last_not_of(" ");
   if(start!=std::string::npos) {
     std::string trimmed=text.substr(start,end-start+1);
