@@ -80,8 +80,12 @@ void CheckRouting() {
   ui.m3e_install_logs_={"error detail"};ui.SetInstallStage(InstallStage::NONE);assert(!ui.IsInstallPageLocked());
   ui.SetInstallStage(InstallStage::ERROR);assert(ui.m3e_install_logs_.empty());
   ui.SetInstallStage(InstallStage::WAITING);assert(ui.m3e_install_logs_.empty());
-  for(auto result:{INSTALL_SUCCESS,INSTALL_ERROR,INSTALL_CORRUPT,INSTALL_NONE}) {
-    auto expected=result==INSTALL_SUCCESS?InstallStage::SUCCESS:result==INSTALL_NONE?InstallStage::CANCELLED:InstallStage::ERROR;
+  Device cancelled;cancelled.ui.stage=InstallStage::WAITING;
+  ShowInstallResult(&cancelled,INSTALL_NONE);
+  assert(cancelled.ui.stage==InstallStage::NONE && cancelled.ui.logs==0);
+  assert(cancelled.ui.stages==std::vector<InstallStage>{InstallStage::NONE});
+  for(auto result:{INSTALL_SUCCESS,INSTALL_ERROR,INSTALL_CORRUPT}) {
+    auto expected=result==INSTALL_SUCCESS?InstallStage::SUCCESS:InstallStage::ERROR;
     for(bool logs:{false,true}) {
       Device device;device.ui.selections=logs?std::deque<size_t>{1,0}:std::deque<size_t>{0};
       ShowInstallResult(&device,result);assert(device.ui.logs==(logs?1:0));
