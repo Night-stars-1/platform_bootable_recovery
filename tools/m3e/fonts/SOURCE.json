@@ -1,0 +1,14 @@
+[
+  {
+    "file": "Roboto.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/Roboto%5Bwdth%2Cwght%5D.ttf",
+    "git_blob": "5522a368d9072fd88c299916e61fcff369949061",
+    "sha256": "d7598e12c5dbef095ff8272cfc55da0250bd07fbdecbac8a530b9b277872a134"
+  },
+  {
+    "file": "OFL.txt",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/OFL.txt",
+    "git_blob": "9c48e05a24fa2267e207ecf17560291b5621c197",
+    "sha256": "061402327a96aadb0bfb694a960ed289ecd38d383e396243831ab81feb109c41"
+  }
+]
