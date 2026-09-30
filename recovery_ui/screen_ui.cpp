@@ -931,7 +931,8 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(const std::vector<std::s
         fastbootd_logo_enabled_, char_width_, char_height_, title_lines_, palette,
         menu_->PageTitle(), dashboard, logo_height);
     if (home_logo) {
-      DrawSurface(home_logo, 0, 0, home_logo->width, home_logo->height, m.inset,
+      int logo_x = (ScreenWidth() - static_cast<int>(home_logo->width)) / 2;
+      DrawSurface(home_logo, 0, 0, home_logo->width, home_logo->height, logo_x,
                   top + recovery_m3e::Dp(ScreenWidth(), 48) + recovery_m3e::Dp(ScreenWidth(), 14));
     }
     y += menu_->DrawHeader(m.inset, y);
@@ -952,7 +953,8 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(const std::vector<std::s
       row = row > 0 ? row - 1 : text_rows_ - 1;
     }
     recovery_m3e::DrawFooter(canvas, m, y + recovery_m3e::Dp(ScreenWidth(), 16), bottom,
-                             title_lines_, HasTouchScreen(), HasThreeButtons(), recent, palette);
+                             title_lines_, HasTouchScreen(), HasThreeButtons(), recent, palette,
+                             menu_->IsMain() && !fastbootd_logo_enabled_);
     return;
   }
   // Preserve full upstream output during installation and log viewing.
