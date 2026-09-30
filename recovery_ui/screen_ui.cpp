@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <thread>
@@ -218,7 +219,8 @@ int TextMenu::DrawItems(int /*x*/, int y, int screen_width, bool long_press) con
                                     : UIElement::MENU_BG);
 
     int bar_height = padding + char_height_ + padding;
-    draw_funcs_.DrawHighlightBar(padding, y + offset, screen_width - (padding * 2), bar_height);
+    draw_funcs_.DrawHighlightBar(padding, y + offset, screen_width - (padding * 2), bar_height,
+                                 i == MenuStart(), i + 1 == MenuEnd());
 
     draw_funcs_.SetColor(selected ? UIElement::MENU_SEL_FG : UIElement::MENU);
     offset += draw_funcs_.DrawTextLine(padding * 2, y + offset, TextItem(i), false /* bold */);
@@ -711,10 +713,7 @@ void ScreenRecoveryUI::SetColor(UIElement e) const {
       gr_color(kLightTextR, kLightTextG, kLightTextB, 255);
       break;
     case UIElement::MENU_BG:
-      if (fastbootd_logo_enabled_)
-        gr_color(0xe6 * 0.20, 0x51 * 0.20, 0x00 * 0.20, 255);
-      else
-        gr_color(0x7c * 0.20, 0x4d * 0.20, 0xff * 0.20, 255);
+      gr_color(255, 255, 255, 255);
       break;
     case UIElement::MENU_SEL_BG:
     case UIElement::SCROLLBAR:
@@ -839,9 +838,32 @@ int ScreenRecoveryUI::DrawHorizontalRule(int y) const {
 }
 
 void ScreenRecoveryUI::DrawHighlightBar(int x, int y, int width, int height) const {
-  if (y + height > ScreenHeight())
-    height = ScreenHeight() - y;
-  gr_fill(x, y, x + width, y + height);
+  DrawHighlightBar(x, y, width, height, true, true);
+}
+
+void ScreenRecoveryUI::DrawHighlightBar(int x, int y, int width, int height, bool round_top,
+                                        bool round_bottom) const {
+  const int left = std::max(0, x);
+  const int top = std::max(0, y);
+  const int right = std::min(ScreenWidth(), x + width);
+  const int bottom = std::min(ScreenHeight(), y + height);
+  if (right <= left || bottom <= top) return;
+
+  const int radius = std::min(PixelsFromDp(12), std::min(width, height) / 2);
+  for (int row = top; row < bottom; ++row) {
+    const int relative_y = row - y;
+    int inset = 0;
+    if (radius > 0 && round_top && relative_y < radius) {
+      const double dy = radius - relative_y - 0.5;
+      inset = radius - static_cast<int>(std::sqrt(radius * radius - dy * dy));
+    } else if (radius > 0 && round_bottom && relative_y >= height - radius) {
+      const double dy = relative_y - (height - radius) + 0.5;
+      inset = radius - static_cast<int>(std::sqrt(radius * radius - dy * dy));
+    }
+    const int row_left = std::max(left, x + inset);
+    const int row_right = std::min(right, x + width - inset);
+    if (row_right > row_left) gr_fill(row_left, row, row_right, row + 1);
+  }
 }
 
 void ScreenRecoveryUI::DrawScrollBar(int y, int height) const {
