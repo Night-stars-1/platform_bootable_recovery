@@ -25,7 +25,8 @@ M3E 是一套 Material 3 Expressive 风格的 Recovery 界面，直接在原有 
 OTA 安装、签名校验、擦除确认等逻辑沿用上游实现。
 
 可选存储解密框架和设备树后端接口见 [crypto/README.md](crypto/README.md)。
-当前没有随仓库提供可用的 Android 17 设备解密后端，未适配设备不显示内部存储解密入口。
+仓库提供默认关闭的 [Android 17 解密后端源码](crypto/android17/README.md)，包含 metadata、DE、Synthetic Password 和 CE 恢复流程。
+尚未编译或实机验证，也没有默认启用的设备适配；未适配设备不显示内部存储解密入口。
 
 ## 图形化安装流程
 
