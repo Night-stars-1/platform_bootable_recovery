@@ -58,26 +58,16 @@ constexpr InstallStage stages[]={InstallStage::WAITING,InstallStage::VERIFYING,
     InstallStage::INSTALLING,InstallStage::SUCCESS,InstallStage::ERROR,InstallStage::CANCELLED};
 const char* names[]={"waiting","verifying","installing","success","error","cancelled"};
 
-void Render(const std::string& out,int w,int h,bool zh,int index,bool has_logo,bool pixels=false) {
+void Render(const std::string& out,int w,int h,bool zh,int index,bool pixels=false) {
   SetScaleBasis(w,h);SetLanguage(zh?Language::Chinese:Language::English);
   PixelCanvas c(w,h,pixels);Metrics m(w);auto p=Palette::ForMode(false);p.background={0,0,0};
   auto stage=stages[index];int rows=stage==InstallStage::WAITING?1:index>=3?2:0;
   int top=Dp(w,24),bottom=h-top;
-  int logo_height=has_logo?(pixels?120:Dp(w,36)):0;
-  int logo_width=pixels?169:static_cast<int>(std::lround(logo_height*653.0/464.0));
-  auto logo=InstallHeaderLogo(m,top,bottom,rows,has_logo?logo_width:0,logo_height);
-  int y=DrawInstallHeader(c,m,top,bottom,rows,false,{},p,logo);
+  int y=DrawInstallHeader(c,m,top,bottom,rows,false,{},p);
   auto layout=InstallationLayout(m,y,bottom,rows);
   assert(layout.panel.y>=y && layout.panel.y+layout.panel.h<=bottom);
   assert(layout.panel.y==y); // No illustration or empty illustration gap above the panel.
-  if(logo.w) {
-    auto back=BackBounds(m,top);
-    assert(logo.y>=top && logo.y+logo.h<=top+back.h);
-    assert(logo.x+logo.w<=w-m.inset-Dp(w,90));
-    if(rows) assert(logo.x>=back.x+back.w+Dp(w,12));
-    assert(!c.Has("uwuAOSP")); // Artwork replaces, rather than duplicates, the brand text.
-    c.Blit(out+"/logo.ppm",logo);
-  } else if(!CompactInstallHeader(m,top,bottom,rows)) {
+  if(!CompactInstallHeader(m,top,bottom,rows)) {
     assert(c.Has("uwuAOSP"));
   }
   c.runs.clear();
@@ -111,7 +101,6 @@ void Render(const std::string& out,int w,int h,bool zh,int index,bool has_logo,b
 }
 void CheckProgress() {
   SetScaleBasis(360,800);SetLanguage(Language::English);Metrics m(360);Palette p;
-  assert(InstallHeaderLogo(m,24,776,2,600,426).w==0); // Oversized custom resource fallback.
   for(double value:{-1.0,0.0,0.42,1.0,5.0,std::numeric_limits<double>::quiet_NaN()}) {
     PixelCanvas c(360,800);
     DrawInstallPanel(c,m,{24,24,312,188},InstallStage::INSTALLING,value,true,false,{},p);
@@ -136,8 +125,7 @@ int main(int argc,char** argv) {
 #endif
   for(auto [w,h]:std::vector<std::pair<int,int>>{{1220,2712},{720,1280},{360,640},
         {320,480},{1280,720},{320,240},{1600,2560}})
-    for(bool zh:{false,true})for(int i=0;i<6;++i)for(bool logo:{false,true})
-      Render(out,w,h,zh,i,logo);
-  for(bool zh:{false,true})for(int i=0;i<6;++i)Render(out,1220,2712,zh,i,true,true);
-  std::cout<<"PASS: six stages, two languages, seven screen sizes, missing logo, progress and touch geometry\n";
+    for(bool zh:{false,true})for(int i=0;i<6;++i)Render(out,w,h,zh,i);
+  for(bool zh:{false,true})for(int i=0;i<6;++i)Render(out,1220,2712,zh,i,true);
+  std::cout<<"PASS: six stages, two languages, seven screen sizes, text header, progress and touch geometry\n";
 }
