@@ -196,10 +196,15 @@ The host deployment tests can be run without compiling:
 python3 bootable/recovery/tools/crypto/test_prepare_android17.py
 ```
 
-The maintainer should compile/run `recovery_crypto_android17_test`, which tests
+The maintainer should compile/run `recovery_crypto_android17_test` in the normal
+Android native-test environment, which tests
 SP versioned KDFs, stored scrypt parameters, authenticated AES-GCM, truncated
 PasswordData and committed/checksummed WAL handling using synthetic fixtures.
 No native test calls a HAL or reads a real credential/key directory.
+The test is deliberately not a Recovery image module: platform gtest has no
+Recovery variants. It uses the same backend sources with normal Android
+dependencies; the production backend remains `recovery: true`. These fixture
+tests do not validate Recovery linking, HAL operation or device decryption.
 
 For each enabled device, test empty LSKF, PIN, password, pattern, Weaver and
 Gatekeeper paths as applicable, wrong credentials, hardware throttle, missing
