@@ -26,6 +26,9 @@ class PreparationTests(unittest.TestCase):
         self.sqlite = self.root / 'external/sqlite/dist/Android.bp'
         self.sqlite.parent.mkdir(parents=True)
         self.sqlite.write_text('cc_defaults { name: "sqlite-minimal-defaults", }\ncc_defaults { name: "release_package_libsqlite3_library_defaults", }\n')
+        self.analyzer = self.root / 'system/tools/aidl/Android.bp'
+        self.analyzer.parent.mkdir(parents=True)
+        self.analyzer.write_text('// Unrelated compiler declarations stay intact\n' + prepare.ANALYZER_BLOCK + '\n')
 
     def tearDown(self):
         self.temp.cleanup()
@@ -33,9 +36,9 @@ class PreparationTests(unittest.TestCase):
     def test_preview_is_read_only_and_only_dependency_projects_change(self):
         originals = {p: p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
         changes = prepare.plan(self.root, self.review)
-        self.assertEqual(len(changes), 6)
+        self.assertEqual(len(changes), 7)
         for path in changes:
-            self.assertTrue(path.startswith(('hardware/interfaces/', 'external/sqlite/')))
+            self.assertTrue(path.startswith(('hardware/interfaces/', 'external/sqlite/', 'system/tools/aidl/')))
         self.assertEqual(originals, {p: p.read_bytes() for p in originals})
 
     def test_applied_plan_is_idempotent(self):
@@ -63,6 +66,25 @@ class PreparationTests(unittest.TestCase):
         self.sqlite.write_text('cc_library_static { name: "librecovery_crypto_sqlite", }')
         with self.assertRaisesRegex(ValueError, 'differs'):
             prepare.plan(self.root, self.review)
+
+    def test_analyzer_variant_fills_generated_aidl_dependency(self):
+        before, after = prepare.plan(self.root, self.review)['system/tools/aidl/Android.bp']
+        self.assertEqual(after.count('recovery_available: true'), 1)
+        self.assertEqual(after.replace('\n    recovery_available: true,', ''), before)
+        self.assertEqual(prepare.prepare_analyzer(after), after)
+
+    def test_changed_analyzer_dependencies_are_refused_before_writes(self):
+        self.analyzer.write_text(prepare.ANALYZER_BLOCK.replace('"libbinder",', '"libbinder", "unknown-runtime",'))
+        before = self.sqlite.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'runtime needs review'):
+            prepare.plan(self.root, self.review)
+        self.assertEqual(self.sqlite.read_bytes(), before)
+
+    def test_analyzer_explicit_disable_and_duplicate_are_refused(self):
+        with self.assertRaises(ValueError):
+            prepare.prepare_analyzer(prepare.ANALYZER_BLOCK.replace('host_supported:', 'recovery_available: false, host_supported:'))
+        with self.assertRaisesRegex(ValueError, 'Unknown module layout'):
+            prepare.prepare_analyzer(prepare.ANALYZER_BLOCK * 2)
 
 
 if __name__ == '__main__':
