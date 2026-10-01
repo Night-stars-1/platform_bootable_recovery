@@ -77,7 +77,7 @@ static int Negotiate(const Config& c) {
           if (error != legacy::ErrorCode::OK || (value.seed.size() != 0 && value.seed.size() != 32))
             return;
           p.seed.assign(value.seed.begin(), value.seed.end());
-          p.nonce.assign(value.nonce.begin(), value.nonce.end());
+          p.nonce.assign(value.nonce.data(), value.nonce.data() + value.nonce.size());
           ok = p.nonce.size() == 32;
         });
     if (!status.isOk() || !ok) return RC_SERVICES_UNAVAILABLE;
@@ -105,7 +105,7 @@ static int Negotiate(const Config& c) {
     old_parameters[i].seed.resize(parameters[i].seed.size());
     std::copy(parameters[i].seed.begin(), parameters[i].seed.end(), old_parameters[i].seed.begin());
     std::copy(parameters[i].nonce.begin(), parameters[i].nonce.end(),
-              old_parameters[i].nonce.begin());
+              old_parameters[i].nonce.data());
   }
   for (const auto& device : old_devices) {
     bool ok = false;
