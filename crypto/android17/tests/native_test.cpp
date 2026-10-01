@@ -4,11 +4,35 @@
  */
 // Pure format/crypto fixtures only. No test calls a HAL, the backend or real key paths.
 #include <gtest/gtest.h>
+#include "dm_ioctl_compat.h"
 #include "primitives.h"
 #include "sqlite_snapshot.h"
 #include "synthetic_password.h"
 #include "vectors.h"
 using namespace recovery_crypto::android17;
+TEST(Android17RecoveryCrypto, DeviceMapperRequestsSupportOlderKernelMinor) {
+  struct {
+    dm_ioctl io;
+    dm_target_spec target;
+  } request{};
+  InitializeDmIo(&request.io, sizeof(request));
+  // diting's kernel accepts 4.44 while Android 17 build headers declare 4.50.
+  // Other devices use the same backward-compatible libdm request convention.
+  EXPECT_EQ(request.io.version[0], 4u);
+  EXPECT_EQ(request.io.version[1], 0u);
+  EXPECT_EQ(request.io.version[2], 0u);
+  EXPECT_EQ(request.io.data_size, sizeof(request));
+  EXPECT_EQ(request.io.data_start, sizeof(dm_ioctl));
+  EXPECT_LE(request.io.version[1], 44u);
+  // ioctl writes back the running kernel's version. Reset it for activation,
+  // and clear the old table/flags rather than reusing a load response.
+  request.io.version[1] = 44;
+  request.io.flags = DM_READONLY_FLAG | DM_SECURE_DATA_FLAG;
+  InitializeDmIo(&request.io, sizeof(dm_ioctl));
+  EXPECT_EQ(request.io.version[1], 0u);
+  EXPECT_EQ(request.io.flags, 0u);
+  EXPECT_EQ(request.io.data_size, sizeof(dm_ioctl));
+}
 static Bytes Hex(const char* value) {
   Bytes out;
   auto digit = [](char c) { return c <= '9' ? c - '0' : c - 'a' + 10; };

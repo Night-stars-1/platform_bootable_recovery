@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstring>
 #include "../secret_memory.h"
+#include "dm_ioctl_compat.h"
 #include "files.h"
 #include "key_storage.h"
 #include "primitives.h"
@@ -233,12 +234,7 @@ int Storage::Mount(Hal& hal) {
   if (control.get() < 0) return RC_IO_ERROR;
   if (!dm.CreateEmptyDevice(name)) return RC_IO_ERROR;
   auto init = [&](dm_ioctl* io, size_t count) {
-    memset(io, 0, count);
-    io->version[0] = DM_VERSION_MAJOR;
-    io->version[1] = DM_VERSION_MINOR;
-    io->version[2] = DM_VERSION_PATCHLEVEL;
-    io->data_size = count;
-    io->data_start = sizeof(dm_ioctl);
+    InitializeDmIo(io, count);
     strcpy(io->name, name);
   };
   auto* io = static_cast<dm_ioctl*>(request.data());
