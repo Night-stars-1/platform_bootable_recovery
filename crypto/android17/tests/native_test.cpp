@@ -4,12 +4,36 @@
  */
 // Pure format/crypto fixtures only. No test calls a HAL, the backend or real key paths.
 #include <gtest/gtest.h>
+#include <cerrno>
+#include <climits>
+#include "diagnostic.h"
 #include "dm_ioctl_compat.h"
 #include "primitives.h"
 #include "sqlite_snapshot.h"
 #include "synthetic_password.h"
 #include "vectors.h"
 using namespace recovery_crypto::android17;
+TEST(Android17RecoveryCrypto, DiagnosticFormatIsBoundedAndContainsOnlyTypedCodes) {
+  EXPECT_EQ(FormatDiagnostic(RC_IO_ERROR, Checkpoint::KeymintBegin, CodeSource::Hal, -26),
+            "[recovery_crypto] point=keymint_begin result=7 source=hal code=-26\n");
+  EXPECT_EQ(FormatDiagnostic(RC_IO_ERROR, Checkpoint::FscryptAddKey, CodeSource::Errno, EACCES),
+            "[recovery_crypto] point=fscrypt_add_key result=7 source=errno code=" +
+                std::to_string(EACCES) + "\n");
+  EXPECT_EQ(FormatDiagnostic(RC_OK, Checkpoint::SpUnlock),
+            "[recovery_crypto] point=sp_unlock result=0 source=none code=0\n");
+  EXPECT_TRUE(FormatDiagnostic(-1, Checkpoint::SpUnlock).empty());
+  EXPECT_TRUE(FormatDiagnostic(RC_IO_ERROR + 1, Checkpoint::SpUnlock).empty());
+  EXPECT_TRUE(FormatDiagnostic(RC_IO_ERROR, static_cast<Checkpoint>(-1)).empty());
+  EXPECT_TRUE(FormatDiagnostic(RC_IO_ERROR, Checkpoint::SpUnlock,
+                               static_cast<CodeSource>(-1)).empty());
+  EXPECT_TRUE(FormatDiagnostic(RC_IO_ERROR, Checkpoint::SpUnlock, CodeSource::None, 1).empty());
+  for (int32_t code : {INT32_MIN, INT32_MAX}) {
+    auto line = FormatDiagnostic(RC_IO_ERROR, Checkpoint::KeymintFinish, CodeSource::Hal, code);
+    EXPECT_FALSE(line.empty());
+    EXPECT_LT(line.size(), 160u);
+    EXPECT_EQ(line.find('\n'), line.size() - 1);
+  }
+}
 TEST(Android17RecoveryCrypto, PatternGridUsesUserSettingAndDefaultsOnlyWhenAbsent) {
   sqlite3* raw = nullptr;
   ASSERT_EQ(sqlite3_open(":memory:", &raw), SQLITE_OK);

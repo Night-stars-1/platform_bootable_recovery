@@ -15,6 +15,7 @@
 #include <cstring>
 #include <limits>
 #include <thread>
+#include "diagnostic.h"
 #include "primitives.h"
 namespace recovery_crypto::android17 {
 namespace gk = aidl::android::hardware::gatekeeper;
@@ -31,12 +32,15 @@ static std::shared_ptr<T> Lookup(const std::string& name) {
   }
   return nullptr;
 }
-static int Error(const ndk::ScopedAStatus& status) {
+static int Error(const ndk::ScopedAStatus& status, Checkpoint point) {
   if (status.isOk()) return RC_OK;
-  if (status.getExceptionCode() != EX_SERVICE_SPECIFIC) return RC_SERVICES_UNAVAILABLE;
+  if (status.getExceptionCode() != EX_SERVICE_SPECIFIC)
+    return Diagnostic(RC_SERVICES_UNAVAILABLE, point, CodeSource::BinderException,
+                      status.getExceptionCode());
   auto error = static_cast<km::ErrorCode>(status.getServiceSpecificError());
-  if (error == km::ErrorCode::KEY_REQUIRES_UPGRADE) return RC_KEY_UPGRADE_REQUIRED;
-  return RC_IO_ERROR;
+  return Diagnostic(error == km::ErrorCode::KEY_REQUIRES_UPGRADE ? RC_KEY_UPGRADE_REQUIRED :
+                                                                 RC_IO_ERROR,
+                    point, CodeSource::Hal, status.getServiceSpecificError());
 }
 static int Negotiate(const Config& c) {
   namespace ss = aidl::android::hardware::security::sharedsecret;
@@ -157,7 +161,7 @@ int Hal::Decrypt(View keyblob, View ciphertext, View app_id, const Authenticatio
                  Bytes* out) {
   Clear(*out);
   if (!keymint_ || keyblob.empty() || ciphertext.size() < 28 || ciphertext.size() > 65536)
-    return RC_IO_ERROR;
+    return Diagnostic(RC_IO_ERROR, Checkpoint::KeymintInput);
   using V = km::KeyParameterValue;
   std::vector<km::KeyParameter> params = {
     { km::Tag::BLOCK_MODE, V::make<V::blockMode>(km::BlockMode::GCM) },
@@ -179,16 +183,20 @@ int Hal::Decrypt(View keyblob, View ciphertext, View app_id, const Authenticatio
       auto& v = p.value.get<V::blob>();
       if (!v.empty()) OPENSSL_cleanse(v.data(), v.size());
     }
-  int result = Error(status);
+  int result = Error(status, Checkpoint::KeymintBegin);
   if (result != RC_OK) return result;
-  if (!begin.operation) return RC_IO_ERROR;
+  if (!begin.operation) return Diagnostic(RC_IO_ERROR, Checkpoint::KeymintBegin);
   std::optional<aidl::android::hardware::security::secureclock::TimeStampToken> timestamp;
   if (timestamp_required_ && token) {
     timestamp.emplace();
     status = clock_->generateTimeStamp(begin.challenge, &*timestamp);
     if (!status.isOk()) {
       begin.operation->abort();
-      return RC_SERVICES_UNAVAILABLE;
+      return Diagnostic(RC_SERVICES_UNAVAILABLE, Checkpoint::SecureClock,
+                        status.getExceptionCode() == EX_SERVICE_SPECIFIC ? CodeSource::Hal :
+                                                                         CodeSource::BinderException,
+                        status.getExceptionCode() == EX_SERVICE_SPECIFIC ?
+                            status.getServiceSpecificError() : status.getExceptionCode());
     }
   }
   // One bounded finish handles the complete ciphertext+tag; never publish unauthenticated update
@@ -196,21 +204,22 @@ int Hal::Decrypt(View keyblob, View ciphertext, View app_id, const Authenticatio
   status = begin.operation->finish(input, std::nullopt, token, timestamp, std::nullopt, &plain);
   if (timestamp && !timestamp->mac.empty())
     OPENSSL_cleanse(timestamp->mac.data(), timestamp->mac.size());
-  result = Error(status);
+  result = Error(status, Checkpoint::KeymintFinish);
   if (result != RC_OK) {
     begin.operation->abort();
     return result;
   }
-  if (plain.size() != ciphertext.size() - 28) return RC_IO_ERROR;
+  if (plain.size() != ciphertext.size() - 28)
+    return Diagnostic(RC_IO_ERROR, Checkpoint::KeymintOutput);
   out->assign(plain.begin(), plain.end());
   return RC_OK;
 }
 int Hal::ExportStorageKey(View persistent, Bytes* ephemeral) {
   BinderBytes in(persistent), out;
   auto status = keymint_->convertStorageKeyToEphemeral(in, &out);
-  int result = Error(status);
+  int result = Error(status, Checkpoint::StorageExport);
   if (result != RC_OK) return result;
-  if (out.empty() || out.size() > 128) return RC_IO_ERROR;
+  if (out.empty() || out.size() > 128) return Diagnostic(RC_IO_ERROR, Checkpoint::StorageExport);
   ephemeral->assign(out.begin(), out.end());
   return RC_OK;
 }
@@ -233,7 +242,7 @@ int Hal::VerifyGatekeeper(uint32_t user, View handle, View password, Authenticat
                           uint32_t* retry) {
   if (user > INT32_MAX || handle.size() < 9 || handle.size() > 4096 || handle[0] < 1 ||
       handle[0] > 3)
-    return RC_IO_ERROR;
+    return Diagnostic(RC_IO_ERROR, Checkpoint::GatekeeperVerify);
   BinderBytes h(handle), p(password);
   if (gatekeeper_) {
     gk::GatekeeperVerifyResponse response;
@@ -241,19 +250,30 @@ int Hal::VerifyGatekeeper(uint32_t user, View handle, View password, Authenticat
     if (!status.isOk()) {
       if (status.getExceptionCode() == EX_SERVICE_SPECIFIC) {
         if (status.getServiceSpecificError() == gk::IGatekeeper::ERROR_GENERAL_FAILURE)
-          return RC_WRONG_CREDENTIAL;
+          return Diagnostic(RC_WRONG_CREDENTIAL, Checkpoint::GatekeeperVerify,
+                            CodeSource::Hal, status.getServiceSpecificError());
         if (status.getServiceSpecificError() == gk::IGatekeeper::ERROR_NOT_IMPLEMENTED)
-          return RC_UNSUPPORTED;
+          return Diagnostic(RC_UNSUPPORTED, Checkpoint::GatekeeperVerify,
+                            CodeSource::Hal, status.getServiceSpecificError());
       }
-      return RC_SERVICES_UNAVAILABLE;
+      return Diagnostic(RC_SERVICES_UNAVAILABLE, Checkpoint::GatekeeperVerify,
+                        status.getExceptionCode() == EX_SERVICE_SPECIFIC ? CodeSource::Hal :
+                                                                         CodeSource::BinderException,
+                        status.getExceptionCode() == EX_SERVICE_SPECIFIC ?
+                            status.getServiceSpecificError() : status.getExceptionCode());
     }
     if (response.statusCode == gk::IGatekeeper::ERROR_RETRY_TIMEOUT)
-      return Retry(response.timeoutMs > 0 ? response.timeoutMs : 0, retry);
-    if (response.statusCode == gk::IGatekeeper::ERROR_GENERAL_FAILURE) return RC_WRONG_CREDENTIAL;
-    if (response.statusCode == gk::IGatekeeper::ERROR_NOT_IMPLEMENTED) return RC_UNSUPPORTED;
+      return Diagnostic(Retry(response.timeoutMs > 0 ? response.timeoutMs : 0, retry),
+                        Checkpoint::GatekeeperVerify, CodeSource::Hal, response.statusCode);
+    if (response.statusCode == gk::IGatekeeper::ERROR_GENERAL_FAILURE)
+      return Diagnostic(RC_WRONG_CREDENTIAL, Checkpoint::GatekeeperVerify,
+                        CodeSource::Hal, response.statusCode);
+    if (response.statusCode == gk::IGatekeeper::ERROR_NOT_IMPLEMENTED)
+      return Diagnostic(RC_UNSUPPORTED, Checkpoint::GatekeeperVerify,
+                        CodeSource::Hal, response.statusCode);
     if (response.statusCode != gk::IGatekeeper::STATUS_OK &&
         response.statusCode != gk::IGatekeeper::STATUS_REENROLL)
-      return RC_IO_ERROR;
+      return Diagnostic(RC_IO_ERROR, Checkpoint::GatekeeperVerify, CodeSource::Hal, response.statusCode);
     auth->token = std::move(response.hardwareAuthToken);
   } else if (old_gatekeeper_) {
     int result = RC_SERVICES_UNAVAILABLE;
@@ -263,25 +283,29 @@ int Hal::VerifyGatekeeper(uint32_t user, View handle, View password, Authenticat
     auto status =
         old_gatekeeper_->verify(user, 0, hh, pp, [&](const oldgk::GatekeeperResponse& response) {
           if (response.code == oldgk::GatekeeperStatusCode::ERROR_RETRY_TIMEOUT) {
-            result = Retry(response.timeout, retry);
+            result = Diagnostic(Retry(response.timeout, retry), Checkpoint::GatekeeperVerify,
+                                CodeSource::Hal, static_cast<int32_t>(response.code));
             return;
           }
           if (response.code == oldgk::GatekeeperStatusCode::ERROR_GENERAL_FAILURE) {
-            result = RC_WRONG_CREDENTIAL;
+            result = Diagnostic(RC_WRONG_CREDENTIAL, Checkpoint::GatekeeperVerify,
+                                CodeSource::Hal, static_cast<int32_t>(response.code));
             return;
           }
           if (response.code == oldgk::GatekeeperStatusCode::ERROR_NOT_IMPLEMENTED) {
-            result = RC_UNSUPPORTED;
+            result = Diagnostic(RC_UNSUPPORTED, Checkpoint::GatekeeperVerify,
+                                CodeSource::Hal, static_cast<int32_t>(response.code));
             return;
           }
           if (response.code != oldgk::GatekeeperStatusCode::STATUS_OK &&
               response.code != oldgk::GatekeeperStatusCode::STATUS_REENROLL) {
-            result = RC_IO_ERROR;
+            result = Diagnostic(RC_IO_ERROR, Checkpoint::GatekeeperVerify,
+                                CodeSource::Hal, static_cast<int32_t>(response.code));
             return;
           }
           View raw(response.data.data(), response.data.size());
           if (raw.size() != 69 || raw[0] != 0) {
-            result = RC_IO_ERROR;
+            result = Diagnostic(RC_IO_ERROR, Checkpoint::GatekeeperToken);
             return;
           }
           km::HardwareAuthToken t;
@@ -296,23 +320,30 @@ int Hal::VerifyGatekeeper(uint32_t user, View handle, View password, Authenticat
           auth->token = std::move(t);
           result = RC_OK;
         });
-    if (!status.isOk()) return RC_SERVICES_UNAVAILABLE;
-    if (result != RC_OK) return result;
+    if (!status.isOk()) return Diagnostic(RC_SERVICES_UNAVAILABLE, Checkpoint::GatekeeperVerify);
+    if (result != RC_OK) return Diagnostic(result, Checkpoint::GatekeeperVerify);
   } else
-    return RC_SERVICES_UNAVAILABLE;
+    return Diagnostic(RC_SERVICES_UNAVAILABLE, Checkpoint::GatekeeperVerify);
   if (!auth->token || auth->token->mac.size() != 32 || auth->token->challenge != 0 ||
       static_cast<uint64_t>(auth->token->userId) != Little64(handle, 1) ||
       auth->token->authenticatorType != km::HardwareAuthenticatorType::PASSWORD)
-    return RC_IO_ERROR;
+    return Diagnostic(RC_IO_ERROR, Checkpoint::GatekeeperToken);
   // STATUS_REENROLL is accepted without enrolling, changing the handle or writing FRP.
-  return RC_OK;
+  return Diagnostic(RC_OK, Checkpoint::GatekeeperVerify);
 }
 int Hal::ReadWeaver(uint32_t slot, View stretched, Bytes* secret, uint32_t* retry) {
   uint32_t slots = 0, key_size = 0, value_size = 0;
   if (weaver_) {
     wv::WeaverConfig config;
-    if (!weaver_->getConfig(&config).isOk()) return RC_SERVICES_UNAVAILABLE;
-    if (config.slots < 1 || config.keySize < 1 || config.valueSize < 1) return RC_IO_ERROR;
+    auto status = weaver_->getConfig(&config);
+    if (!status.isOk())
+      return Diagnostic(RC_SERVICES_UNAVAILABLE, Checkpoint::WeaverRead,
+                        status.getExceptionCode() == EX_SERVICE_SPECIFIC ? CodeSource::Hal :
+                                                                         CodeSource::BinderException,
+                        status.getExceptionCode() == EX_SERVICE_SPECIFIC ?
+                            status.getServiceSpecificError() : status.getExceptionCode());
+    if (config.slots < 1 || config.keySize < 1 || config.valueSize < 1)
+      return Diagnostic(RC_IO_ERROR, Checkpoint::WeaverRead);
     slots = config.slots;
     key_size = config.keySize;
     value_size = config.valueSize;
@@ -320,23 +351,33 @@ int Hal::ReadWeaver(uint32_t slot, View stretched, Bytes* secret, uint32_t* retr
     bool ok = false;
     auto status = old_weaver_->getConfig([&](oldwv::WeaverStatus s, const oldwv::WeaverConfig& c) {
       ok = s == oldwv::WeaverStatus::OK;
+      if (!ok)
+        Diagnostic(RC_SERVICES_UNAVAILABLE, Checkpoint::WeaverRead, CodeSource::Hal,
+                   static_cast<int32_t>(s));
       slots = c.slots;
       key_size = c.keySize;
       value_size = c.valueSize;
     });
-    if (!status.isOk() || !ok) return RC_SERVICES_UNAVAILABLE;
+    if (!status.isOk() || !ok)
+      return Diagnostic(RC_SERVICES_UNAVAILABLE, Checkpoint::WeaverRead);
   } else
-    return RC_SERVICES_UNAVAILABLE;
+    return Diagnostic(RC_SERVICES_UNAVAILABLE, Checkpoint::WeaverRead);
   if (slot >= slots || !key_size || key_size > 64 || !value_size || value_size > 4096)
-    return RC_IO_ERROR;
+    return Diagnostic(RC_IO_ERROR, Checkpoint::WeaverRead);
   auto hash = PersonalizedHash("weaver-key", stretched);
   BinderBytes key(View(hash).first(key_size));
   if (weaver_) {
     wv::WeaverReadResponse response;
-    if (!weaver_->read(slot, key, &response).isOk()) return RC_SERVICES_UNAVAILABLE;
+    auto status = weaver_->read(slot, key, &response);
+    if (!status.isOk())
+      return Diagnostic(RC_SERVICES_UNAVAILABLE, Checkpoint::WeaverRead,
+                        status.getExceptionCode() == EX_SERVICE_SPECIFIC ? CodeSource::Hal :
+                                                                         CodeSource::BinderException,
+                        status.getExceptionCode() == EX_SERVICE_SPECIFIC ?
+                            status.getServiceSpecificError() : status.getExceptionCode());
     if (response.timeout < 0) {
       if (!response.value.empty()) OPENSSL_cleanse(response.value.data(), response.value.size());
-      return RC_IO_ERROR;
+      return Diagnostic(RC_IO_ERROR, Checkpoint::WeaverRead);
     }
     int result = RC_IO_ERROR;
     if (response.status == wv::WeaverReadStatus::OK && response.value.size() == value_size &&
@@ -350,7 +391,8 @@ int Hal::ReadWeaver(uint32_t slot, View stretched, Bytes* secret, uint32_t* retr
                                                                         : RC_IO_ERROR;
     }
     if (!response.value.empty()) OPENSSL_cleanse(response.value.data(), response.value.size());
-    return result;
+    return Diagnostic(result, Checkpoint::WeaverRead, CodeSource::Hal,
+                      static_cast<int32_t>(response.status));
   }
   int result = RC_SERVICES_UNAVAILABLE;
   android::hardware::hidl_vec<uint8_t> k;
@@ -367,7 +409,8 @@ int Hal::ReadWeaver(uint32_t slot, View stretched, Bytes* secret, uint32_t* retr
                                                                  : RC_IO_ERROR;
         else
           result = RC_IO_ERROR;
+        Diagnostic(result, Checkpoint::WeaverRead, CodeSource::Hal, static_cast<int32_t>(s));
       });
-  return status.isOk() ? result : RC_SERVICES_UNAVAILABLE;
+  return status.isOk() ? result : Diagnostic(RC_SERVICES_UNAVAILABLE, Checkpoint::WeaverRead);
 }
 }  // namespace recovery_crypto::android17

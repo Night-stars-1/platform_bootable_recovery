@@ -4,6 +4,7 @@
  */
 #include <memory>
 #include "config.h"
+#include "diagnostic.h"
 #include "hal.h"
 #include "storage.h"
 #include "synthetic_password.h"
@@ -26,7 +27,7 @@ static int32_t Prepare(uint32_t user) {
   if (result != RC_OK) return result;
   result = session->hal.Connect(session->config);
   if (result == RC_OK) session->stage = 1;
-  return result;
+  return Diagnostic(result, Checkpoint::Services);
 }
 static bool Stage(uint32_t user, unsigned stage) {
   return session && session->user == user && session->stage == stage;
@@ -35,30 +36,32 @@ static int32_t Mount(uint32_t user) {
   if (!Stage(user, 1)) return RC_IO_ERROR;
   int result = session->storage.Mount(session->hal);
   if (result == RC_OK) session->stage = 2;
-  return result;
+  return Diagnostic(result, Checkpoint::Metadata);
 }
 static int32_t De(uint32_t user) {
   if (!Stage(user, 2)) return RC_IO_ERROR;
   int result = session->storage.LoadDe(session->hal, user);
   if (result == RC_OK) session->stage = 3;
-  return result;
+  return Diagnostic(result, Checkpoint::DeKeys);
 }
 static int32_t Type(uint32_t user, uint32_t* type) {
   if (!Stage(user, 3) || !type) return RC_IO_ERROR;
   int result = session->protector.Load(user, type);
   if (result == RC_OK) session->stage = 4;
-  return result;
+  return Diagnostic(result, Checkpoint::CredentialType);
 }
 static int32_t Ce(uint32_t user, uint32_t type, const uint8_t* credential, size_t length,
                   uint32_t* retry) {
-  if (!Stage(user, 4) || !retry || (length && !credential)) return RC_IO_ERROR;
+  if (!Stage(user, 4) || !retry || (length && !credential))
+    return Diagnostic(RC_IO_ERROR, Checkpoint::CredentialFormat);
   Bytes secret;
   int result =
       session->protector.Unlock(session->hal, type, { credential, length }, &secret, retry);
+  Diagnostic(result, Checkpoint::SpUnlock);
   if (result != RC_OK) return result;
   result = session->storage.LoadCe(session->hal, user, secret);
   if (result == RC_OK) session->stage = 5;
-  return result;
+  return Diagnostic(result, Checkpoint::CeLoad);
 }
 static void Finish() {
   session.reset();

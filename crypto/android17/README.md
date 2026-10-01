@@ -229,6 +229,59 @@ project. The helper never compiles or flashes anything.
 
 ## Validation to perform before shipping
 
+### Locating an unlock failure
+
+The Android 17 backend appends typed diagnostic checkpoints to the existing
+`/tmp/recovery.log`. This works without logd/logcat and leaves worker stdout and
+stderr redirected to `/dev/null`. Only a fixed checkpoint name, public result
+code and numeric errno/Binder/HAL code are emitted. Credentials, pattern cells,
+user IDs, file paths, key material, tokens and vendor error strings are excluded.
+The logger refuses symlinks, non-regular/non-root-owned files and logs at least
+4 MiB; it never creates a log. Logging failure preserves the operation result
+and errno. These diagnostic changes still need Android compilation and device
+validation by the maintainer.
+
+After building/flashing a Recovery containing the diagnostics, make one unlock
+attempt on the phone, then collect the log **before rebooting Recovery**:
+
+```bash
+adb -d pull /tmp/recovery.log recovery-decrypt.log
+```
+
+Each unlock session starts with the coarse `services`, `metadata`, `de_keys` and
+`credential_type` results. CE results include the substeps below, followed by
+`sp_unlock` and, if that succeeds, `ce_load`. A later summary failure may repeat
+the result; use its preceding substep failures to find the cause. CE rotation
+can examine more than one stored key candidate without retrying authentication,
+so an earlier candidate failure does not imply final failure if `ce_load` succeeds.
+
+| Checkpoint | Operation to investigate |
+| --- | --- |
+| `protector_key` | Reading the current SP protector key/security level from keystore |
+| `credential_format`, `stretch` | Input encoding and stored scrypt parameters |
+| `gatekeeper_verify`, `gatekeeper_token`, `weaver_read` | Hardware verification, throttling and token format |
+| `keymint_begin`, `keymint_finish`, `secureclock` | KeyMint key use, authenticated decrypt and timestamp generation |
+| `sp_discardable`, `sp_software_decrypt`, `sp_format`, `sp_handle`, `sp_derive` | SP state, unwrap, main-user verification and FBE subkey derivation |
+| `ce_key_directories`, `stored_key_read`, `stored_key_decrypt` | Existing CE key candidates and their software wrapping |
+| `storage_export` | Hardware-wrapped storage key conversion |
+| `fscrypt_policy`, `fscrypt_descriptor`, `fscrypt_identifier` | Kernel policy/key matching |
+| `fscrypt_add_key`, `fscrypt_status` | Kernel key installation and presence |
+
+`result=0` means success; 1 unsupported, 2 unavailable service, 3 missing existing
+key/state, 4 required key upgrade, 5 credential rejected, 6 hardware throttled,
+7 other I/O/format/cryptographic failure. `source=hal`, `binder` and `errno` identify
+the numeric code's namespace; `source=none code=0` means there is no raw code,
+**not** that the operation succeeded. For example, `keymint_begin result=7
+source=hal code=...` locates a KeyMint rejection; it is not by itself evidence of
+a wrong pattern. No diagnostic automatically retries, enrolls, upgrades or
+rewrites keys.
+
+The pure formatter fixtures in `tests/native_test.cpp` check code/namespace
+formatting, numeric bounds and invalid inputs. They do not write a log or call a
+HAL. Passing source checks does not validate Recovery logging or decryption.
+
+### Maintainer checks
+
 The host deployment tests can be run without compiling:
 
 ```bash
