@@ -13,11 +13,28 @@ FIXTURES = Path(__file__).parent / 'tests/fixtures/sepolicy'
 
 
 class PolicyPatchTests(unittest.TestCase):
+    fixtures = FIXTURES
+    review = 'android17-recovery-key-access'
+    metadata_exclusions = 'domain-init-vold-recovery'
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        shutil.copytree(FIXTURES, self.root / 'system/sepolicy')
+        shutil.copytree(self.fixtures, self.root / 'system/sepolicy')
+
+    def test_review_hashes_match_original_and_patched_fixtures(self):
+        import hashlib
+        import json
+        review = json.loads((policy_patch.PATCH_DIR / (self.review + '.json')).read_text())
+        changes = policy_patch.plan(self.root)
+        for relative in policy_patch.FILES:
+            self.assertEqual(hashlib.sha256((self.fixtures / relative).read_bytes()).hexdigest(),
+                             review['files'][relative]['base_sha256'])
+            self.assertEqual(hashlib.sha256(changes['system/sepolicy/' + relative][1].encode()).hexdigest(),
+                             review['files'][relative]['patched_sha256'])
+        self.assertEqual(hashlib.sha256((self.fixtures / 'public/global_macros').read_bytes()).hexdigest(),
+                         review['fixture_global_macros_sha256'])
 
     def test_preview_is_read_only_and_apply_is_idempotent(self):
         original = {p: p.read_bytes() for p in (self.root / 'system/sepolicy').rglob('*') if p.is_file()}
@@ -51,7 +68,7 @@ class PolicyPatchTests(unittest.TestCase):
         from unittest.mock import patch
         damaged = self.root / 'damaged-patch'
         shutil.copytree(policy_patch.PATCH_DIR, damaged)
-        with (damaged / 'android17-recovery-key-access.patch').open('a') as f:
+        with (damaged / (self.review + '.patch')).open('a') as f:
             f.write('\nchanged\n')
         with patch.object(policy_patch, 'PATCH_DIR', damaged):
             with self.assertRaisesRegex(ValueError, 'patch/review differs'):
@@ -74,8 +91,8 @@ class PolicyPatchTests(unittest.TestCase):
     def test_four_build_conditions_preserve_isolation_and_delete_ban(self):
         changes = policy_patch.plan(self.root)
         order = ('public/te_macros', 'private/vold.te', 'private/keystore.te')
-        permissions = (FIXTURES / 'public/global_macros').read_text()
-        before = [permissions] + [(FIXTURES / p).read_text() for p in order]
+        permissions = (self.fixtures / 'public/global_macros').read_text()
+        before = [permissions] + [(self.fixtures / p).read_text() for p in order]
         after = [permissions] + [changes['system/sepolicy/' + p][1] for p in order]
         xperm = re.compile(r'neverallowxperm\s*(\{[^{}]*\}|\w+)\s+(\w+):(\w+)\s+(\w+)\s+\{([^{}]*)\};')
 
@@ -94,7 +111,7 @@ class PolicyPatchTests(unittest.TestCase):
                     self.assertEqual(canonical(result), canonical(baseline))
                     continue
                 compact = re.sub(r'\s+', '', result)
-                self.assertIn('neverallow{domain-init-vold-recovery}vold_metadata_file:dir*;', compact)
+                self.assertIn('neverallow{' + self.metadata_exclusions + '}vold_metadata_file:dir*;', compact)
                 self.assertIn('neverallow{domain-keystore-init-recovery}keystore_data_file:dir*;', compact)
                 self.assertIn('neverallowrecoverykeystore_data_file:file~{getattropenreadioctllockmapwatchwatch_reads};', compact)
                 self.assertNotIn('~{{', compact)
@@ -104,6 +121,20 @@ class PolicyPatchTests(unittest.TestCase):
                         self.assertNotIn('-recovery', match[1])
                 self.assertIn('FS_IOC_ADD_ENCRYPTION_KEY', result)
                 self.assertIn('FS_IOC_GET_ENCRYPTION_KEY_STATUS', result)
+
+
+class UwuPolicyPatchTests(PolicyPatchTests):
+    fixtures = FIXTURES.with_name('sepolicy-uwu')
+    review = 'android17-uwu-recovery-key-access'
+    metadata_exclusions = 'domain-apexd-init-vold-recovery'
+
+    def test_unknown_metadata_exclusion_refused_without_writes(self):
+        p = self.root / 'system/sepolicy/private/vold.te'
+        p.write_text(p.read_text().replace('-apexd', '-custom_metadata_reader'), newline='\n')
+        original = p.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'patch conflicts'):
+            policy_patch.plan(self.root)
+        self.assertEqual(p.read_bytes(), original)
 
 
 if __name__ == '__main__':

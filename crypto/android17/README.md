@@ -157,12 +157,18 @@ those projects. The device adaptation belongs to the device/vendor projects.
 editing either the device adaptation or those other projects. It does not itself
 run this helper or sync the other projects.
 
-The helper also checks/applies the explicit reviewed
-`tools/crypto/patches/android17-recovery-key-access.patch` to `system/sepolicy`.
+The helper also checks/applies a complete explicitly reviewed patch from
+`tools/crypto/patches/` to `system/sepolicy`. The AOSP variant is
+`android17-recovery-key-access.patch`; the uwuAOSP variant is
+`android17-uwu-recovery-key-access.patch`, reviewed against revision
+`b41cbf3b46882139654574fe46ca5cf8175bf8a5`. The latter preserves uwuAOSP's
+existing `apexd` metadata exceptions and all unrelated platform rules.
 It uses Git against isolated copies to verify either the original or fully
 patched state, preserves compatible unrelated edits, and refuses conflicts or
 partial application. No regular expression generates or rewrites policy rules.
-Review inputs and patch hash are in the sibling JSON manifest.
+Review inputs and patch hashes are in the sibling JSON manifests. Exactly one
+complete variant must match; the helper never combines hunks from different
+variants. An unknown change to a key-isolation rule still requires review.
 
 This patch alone grants no access. An adapted device must explicitly set the
 following in its **BoardConfig**, in the same conditional as its crypto policy:
