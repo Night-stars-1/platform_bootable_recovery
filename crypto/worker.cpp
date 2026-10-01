@@ -18,9 +18,10 @@
 namespace recovery_crypto {
 namespace {
 bool Send(Stage stage, Status status, uint32_t credential = RC_CREDENTIAL_NONE,
-          uint32_t retry = 0, uint32_t kind = kResult) {
+          uint32_t retry = 0, uint32_t kind = kResult,
+          uint32_t pattern_size = RECOVERY_CRYPTO_DEFAULT_PATTERN_SIZE) {
   Reply reply{kProtocol, kind, static_cast<uint32_t>(status), static_cast<uint32_t>(stage),
-              credential, retry};
+              credential, retry, pattern_size};
   return send(kWorkerFd, &reply, sizeof(reply), MSG_NOSIGNAL) == static_cast<ssize_t>(sizeof(reply));
 }
 bool StartStage(Stage stage) { return Send(stage, Status::Ready, 0, 0, kProgress); }
@@ -62,6 +63,8 @@ int RunWorker() {
   auto get = reinterpret_cast<recovery_crypto_get_backend_fn>(
       dlsym(library, "recovery_crypto_get_backend_v1"));
   const auto backend = get ? get() : nullptr;
+  auto get_pattern_size = reinterpret_cast<recovery_crypto_get_pattern_size_fn>(
+      dlsym(library, "recovery_crypto_get_pattern_size_v1"));
   if (!ValidBackend(backend)) {
     Send(Stage::Services, Status::InvalidBackend); dlclose(library); return 0;
   }
@@ -73,6 +76,7 @@ int RunWorker() {
   bool prepared = false;
   bool attempted = false;
   uint32_t user_id = 0, credential_type = RC_CREDENTIAL_NONE;
+  uint32_t pattern_size = RECOVERY_CRYPTO_DEFAULT_PATTERN_SIZE;
   for (;;) {
     Wipe(request, sizeof(*request));
     const auto count = recv(kWorkerFd, request, sizeof(*request), MSG_TRUNC);
@@ -107,13 +111,23 @@ int RunWorker() {
             Status::InvalidBackend : result);
         break;
       }
+      if (credential_type == RC_CREDENTIAL_PATTERN && get_pattern_size) {
+        result = BackendStatus(get_pattern_size(user_id, &pattern_size));
+        if (result != Status::Ready || pattern_size < RECOVERY_CRYPTO_DEFAULT_PATTERN_SIZE ||
+            pattern_size > RECOVERY_CRYPTO_MAX_PATTERN_SIZE) {
+          Send(Stage::Credential, result == Status::Ready || result == Status::Throttled ?
+               Status::InvalidBackend : result);
+          break;
+        }
+      }
       prepared = true;
       if (credential_type != RC_CREDENTIAL_NONE) {
-        if (!Send(Stage::Credential, Status::CredentialRequired, credential_type)) break;
+        if (!Send(Stage::Credential, Status::CredentialRequired, credential_type, 0, kResult,
+                  pattern_size)) break;
         continue;
       }
     } else if (!prepared || request->user_id != user_id ||
-               request->credential_type != credential_type) {
+               request->credential_type != credential_type || request->pattern_size != pattern_size) {
       Send(Stage::CredentialKeys, Status::InvalidBackend); break;
     }
     if (!StartStage(Stage::CredentialKeys)) break;
@@ -122,7 +136,8 @@ int RunWorker() {
         request->length ? request->credential : nullptr, request->length, &retry_seconds));
     Wipe(request, sizeof(*request));
     if (result == Status::Throttled && retry_seconds == 0) result = Status::InvalidBackend;
-    if (!Send(Stage::CredentialKeys, result, credential_type, retry_seconds)) break;
+    if (!Send(Stage::CredentialKeys, result, credential_type, retry_seconds, kResult, pattern_size))
+      break;
     if (result != Status::WrongCredential && result != Status::Throttled) break;
     // No automatic authentication retries. Each new request is initiated by
     // the user; the backend must also enforce Gatekeeper/Weaver's own limits.

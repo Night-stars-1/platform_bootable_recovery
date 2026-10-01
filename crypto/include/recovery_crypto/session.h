@@ -23,6 +23,7 @@ struct Result {
   Stage stage = Stage::Services;
   uint32_t credential_type = RC_CREDENTIAL_NONE;
   uint32_t retry_seconds = 0;
+  uint32_t pattern_size = RECOVERY_CRYPTO_DEFAULT_PATTERN_SIZE;
 };
 
 // No mutable std::string copies, logging or command-line transport of secrets.
@@ -70,6 +71,7 @@ class Session final {
   int pid_ = -1;
   uint32_t user_id_ = 0;
   uint32_t credential_type_ = RC_CREDENTIAL_NONE;
+  uint32_t pattern_size_ = RECOVERY_CRYPTO_DEFAULT_PATTERN_SIZE;
   bool prepared_ = false;
   std::chrono::steady_clock::time_point retry_after_{};
 };

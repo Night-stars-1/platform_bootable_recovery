@@ -76,3 +76,10 @@ extern "C" __attribute__((visibility("default"))) const recovery_crypto_backend_
 recovery_crypto_get_backend_v1() {
   return &recovery_crypto::android17::backend;
 }
+extern "C" __attribute__((visibility("default"))) int32_t
+recovery_crypto_get_pattern_size_v1(uint32_t user, uint32_t* size) {
+  using namespace recovery_crypto::android17;
+  if (!Stage(user, 4) || !size) return RC_IO_ERROR;
+  *size = session->protector.PatternSize();
+  return RC_OK;
+}

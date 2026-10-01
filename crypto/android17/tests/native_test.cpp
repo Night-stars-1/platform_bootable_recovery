@@ -10,6 +10,55 @@
 #include "synthetic_password.h"
 #include "vectors.h"
 using namespace recovery_crypto::android17;
+TEST(Android17RecoveryCrypto, PatternGridUsesUserSettingAndDefaultsOnlyWhenAbsent) {
+  sqlite3* raw = nullptr;
+  ASSERT_EQ(sqlite3_open(":memory:", &raw), SQLITE_OK);
+  std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+  ASSERT_EQ(sqlite3_exec(raw, "CREATE TABLE locksettings(name TEXT,user INTEGER,value TEXT);",
+                        nullptr, nullptr, nullptr), SQLITE_OK);
+  uint32_t size = 0;
+  ASSERT_TRUE(ReadPatternSizeFromDatabase(raw, 0, &size));
+  EXPECT_EQ(size, 3u);
+  ASSERT_EQ(sqlite3_exec(raw, "INSERT INTO locksettings VALUES('lock_pattern_size',10,'6');",
+                        nullptr, nullptr, nullptr), SQLITE_OK);
+  ASSERT_TRUE(ReadPatternSizeFromDatabase(raw, 0, &size));
+  EXPECT_EQ(size, 3u);
+  ASSERT_TRUE(ReadPatternSizeFromDatabase(raw, 10, &size));
+  EXPECT_EQ(size, 6u);
+  for (uint32_t n = 3; n <= 6; ++n) {
+    auto sql = "DELETE FROM locksettings WHERE user=0; INSERT INTO locksettings VALUES"
+               "('lock_pattern_size',0,'" + std::to_string(n) + "');";
+    ASSERT_EQ(sqlite3_exec(raw, sql.c_str(), nullptr, nullptr, nullptr), SQLITE_OK);
+    ASSERT_TRUE(ReadPatternSizeFromDatabase(raw, 0, &size));
+    EXPECT_EQ(size, n);
+  }
+  for (const char* value : {"", "0", "2", "7", "128", "-1", "4x", " 4", "4.0"}) {
+    auto sql = std::string("UPDATE locksettings SET value='") + value + "' WHERE user=0;";
+    ASSERT_EQ(sqlite3_exec(raw, sql.c_str(), nullptr, nullptr, nullptr), SQLITE_OK);
+    EXPECT_FALSE(ReadPatternSizeFromDatabase(raw, 0, &size));
+  }
+  ASSERT_EQ(sqlite3_exec(raw, "UPDATE locksettings SET value='4' WHERE user=0;"
+                        "INSERT INTO locksettings VALUES('lock_pattern_size',0,'5');",
+                        nullptr, nullptr, nullptr), SQLITE_OK);
+  EXPECT_FALSE(ReadPatternSizeFromDatabase(raw, 0, &size));
+}
+TEST(Android17RecoveryCrypto, LargerPatternsUseSingleBytesRatherThanDecimalDigits) {
+  for (uint32_t size = 3; size <= 6; ++size) {
+    Bytes cells, encoded;
+    for (uint32_t i = 0; i < size * size; ++i) cells.push_back(i);
+    ASSERT_TRUE(EncodePatternCredential(cells, size, &encoded));
+    ASSERT_EQ(encoded.size(), size * size);
+    for (uint32_t i = 0; i < size * size; ++i) EXPECT_EQ(encoded[i], '1' + i);
+    cells.back() = cells.front();
+    EXPECT_FALSE(EncodePatternCredential(cells, size, &encoded));
+    EXPECT_TRUE(encoded.empty());
+    cells.back() = size * size;
+    EXPECT_FALSE(EncodePatternCredential(cells, size, &encoded));
+    cells.resize(3);
+    EXPECT_FALSE(EncodePatternCredential(cells, size, &encoded));
+    EXPECT_FALSE(EncodePatternCredential(cells, 7, &encoded));
+  }
+}
 TEST(Android17RecoveryCrypto, DeviceMapperRequestsSupportOlderKernelMinor) {
   struct {
     dm_ioctl io;

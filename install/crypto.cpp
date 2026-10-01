@@ -38,20 +38,22 @@ void ShowError(Device* device, const Result& result) {
   Select(device, headers, {"Continue"});
 }
 
-bool ReadCredential(Device* device, uint32_t type, Credential* credential) {
+bool ReadCredential(Device* device, uint32_t type, uint32_t pattern_size, Credential* credential) {
   credential->Clear();
   if (!credential->secure()) { ShowError(device, {Status::IoError}); return false; }
   if (type == RC_CREDENTIAL_PATTERN) {
     class LockedPattern final : public recovery_ui::PatternInput {
      public:
-      explicit LockedPattern(Credential& credential) : credential_(credential) {}
+      LockedPattern(Credential& credential, unsigned grid) : credential_(credential), grid_(grid) {}
+      unsigned GridSize() const override { return grid_; }
       size_t Size() const override { return credential_.size(); }
       uint8_t Cell(size_t index) const override { return credential_.data()[index]; }
       bool Append(uint8_t cell) override { return credential_.Append(cell); }
       void Clear() override { credential_.Clear(); }
      private:
       Credential& credential_;
-    } pattern(*credential);
+      unsigned grid_;
+    } pattern(*credential, pattern_size);
     return device->GetUI()->ReadPattern(pattern);
   }
   std::string prompt;
@@ -99,7 +101,7 @@ bool UnlockStorage(Device* device) {
   if (result.status != Status::CredentialRequired) { ShowError(device, result); return false; }
   for (;;) {
     Credential credential;
-    if (!ReadCredential(device, result.credential_type, &credential)) return false;
+    if (!ReadCredential(device, result.credential_type, result.pattern_size, &credential)) return false;
     result = session.Unlock(credential, progress);
     credential.Clear();
     if (result.status == Status::Ready) return true;
