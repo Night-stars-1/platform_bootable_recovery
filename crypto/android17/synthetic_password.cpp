@@ -90,8 +90,30 @@ int SyntheticPassword::Load(uint32_t user, uint32_t* credential_type) {
     return RC_IO_ERROR;
   if (type_ != RC_CREDENTIAL_NONE && !weaver_slot_ && (!password_ || password_->handle.empty()))
     return RC_EXISTING_KEY_MISSING;
+  if (type_ == RC_CREDENTIAL_PATTERN && !ReadPatternSize(user, &pattern_size_))
+    return RC_UNSUPPORTED;
   *credential_type = type_;
   return RC_OK;
+}
+bool EncodePatternCredential(View credential, uint32_t size, Bytes* encoded) {
+  Clear(*encoded);
+  if (size < RECOVERY_CRYPTO_DEFAULT_PATTERN_SIZE || size > RECOVERY_CRYPTO_MAX_PATTERN_SIZE ||
+      credential.size() < 4 || credential.size() > size * size)
+    return false;
+  bool used[RECOVERY_CRYPTO_MAX_PATTERN_SIZE * RECOVERY_CRYPTO_MAX_PATTERN_SIZE]{};
+  for (uint8_t cell : credential) {
+    if (cell >= size * size || used[cell]) {
+      OPENSSL_cleanse(used, sizeof(used));
+      Clear(*encoded);
+      return false;
+    }
+    used[cell] = true;
+    // LockPatternUtils.patternToByteArray: row * gridSize + column + '1'.
+    // Cells above index 8 are still individual bytes, not decimal strings.
+    encoded->push_back(cell + '1');
+  }
+  OPENSSL_cleanse(used, sizeof(used));
+  return true;
 }
 int SyntheticPassword::Unlock(Hal& hal, uint32_t type, View credential, Bytes* fbe_key,
                               uint32_t* retry) {
@@ -112,13 +134,7 @@ int SyntheticPassword::Unlock(Hal& hal, uint32_t type, View credential, Bytes* f
     auto value = AsBytes("default-password");
     password.assign(value.begin(), value.end());
   } else if (type == RC_CREDENTIAL_PATTERN) {
-    if (credential.size() < 4 || credential.size() > 9) return RC_IO_ERROR;
-    bool used[9]{};
-    for (uint8_t cell : credential) {
-      if (cell > 8 || used[cell]) return RC_IO_ERROR;
-      used[cell] = true;
-      password.push_back(cell + '1');
-    }
+    if (!EncodePatternCredential(credential, pattern_size_, &password)) return RC_IO_ERROR;
   } else {
     if (credential.empty() ||
         (type == RC_CREDENTIAL_PIN && !std::all_of(credential.begin(), credential.end(),

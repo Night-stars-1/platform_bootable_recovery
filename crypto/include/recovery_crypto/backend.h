@@ -13,6 +13,8 @@ extern "C" {
 // librecovery_crypto_backend. Device-specific sources stay outside this project.
 #define RECOVERY_CRYPTO_BACKEND_ABI 1u
 #define RECOVERY_CRYPTO_MAX_CREDENTIAL 128u
+#define RECOVERY_CRYPTO_DEFAULT_PATTERN_SIZE 3u
+#define RECOVERY_CRYPTO_MAX_PATTERN_SIZE 6u
 
 enum recovery_crypto_result {
   RC_OK = 0,
@@ -47,7 +49,8 @@ struct recovery_crypto_backend_v1 {
   // the fbe-key subkey, and load the existing CE key. Preserve hardware retry
   // limits. retry_seconds must be nonzero when returning RC_RETRY.
   // PIN/password: UTF-8 bytes (UI currently supports ASCII passwords).
-  // Pattern: ordered Android cell bytes 0..8, including skipped midpoint cells.
+  // Pattern: ordered zero-based row-major cell bytes, including skipped cells.
+  // The grid defaults to 3x3; larger grids require the optional size export below.
   // NONE: null pointer, zero length; still resolve the no-LSKF SP protector.
   // Do not retain or print credentials, auth tokens or key material.
   int32_t (*unlock_ce)(uint32_t user_id, uint32_t credential_type,
@@ -60,6 +63,14 @@ struct recovery_crypto_backend_v1 {
 typedef const struct recovery_crypto_backend_v1* (*recovery_crypto_get_backend_fn)(void);
 // Export this unmangled function from the device's shared library.
 const struct recovery_crypto_backend_v1* recovery_crypto_get_backend_v1(void);
+
+// Optional separate export, leaving the existing v1 struct layout unchanged.
+// Called after get_credential_type succeeds for a pattern, before asking for
+// input. Read the user's saved grid size without authenticating or changing it.
+// Return RC_OK and a size in 3..6; other sizes must return RC_UNSUPPORTED.
+// A backend without this export retains the legacy 3x3 behavior.
+typedef int32_t (*recovery_crypto_get_pattern_size_fn)(uint32_t user_id, uint32_t* size);
+int32_t recovery_crypto_get_pattern_size_v1(uint32_t user_id, uint32_t* size);
 
 #ifdef __cplusplus
 }

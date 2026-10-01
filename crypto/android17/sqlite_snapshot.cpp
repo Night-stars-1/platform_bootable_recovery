@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include "files.h"
+#include "recovery_crypto/backend.h"
 namespace recovery_crypto::android17 {
 constexpr size_t kMaxDatabase = 64 * 1024 * 1024;
 static uint32_t Be(View v, size_t p) {
@@ -134,6 +135,33 @@ bool ReadPasswordQuality(uint32_t user, int64_t* quality) {
   auto [end, error] = std::from_chars(value, value + length, *quality);
   return error == std::errc{} && end == value + length && *quality >= 0 &&
          sqlite3_step(q.get()) == SQLITE_DONE;
+}
+bool ReadPatternSizeFromDatabase(sqlite3* db, uint32_t user, uint32_t* size) {
+  if (!db || !size) return false;
+  auto q = Query(db, "SELECT value FROM locksettings WHERE name='lock_pattern_size' AND user=?");
+  if (!q || sqlite3_bind_int64(q.get(), 1, user) != SQLITE_OK) return false;
+  const int step = sqlite3_step(q.get());
+  if (step == SQLITE_DONE) {
+    // AOSP/older installs without this custom setting use the standard grid.
+    *size = RECOVERY_CRYPTO_DEFAULT_PATTERN_SIZE;
+    return true;
+  }
+  if (step != SQLITE_ROW) return false;
+  const char* value = reinterpret_cast<const char*>(sqlite3_column_text(q.get(), 0));
+  int length = sqlite3_column_bytes(q.get(), 0);
+  uint32_t parsed = 0;
+  if (!value || length < 1 || length > 3) return false;
+  auto [end, error] = std::from_chars(value, value + length, parsed);
+  if (error != std::errc{} || end != value + length ||
+      parsed < RECOVERY_CRYPTO_DEFAULT_PATTERN_SIZE || parsed > RECOVERY_CRYPTO_MAX_PATTERN_SIZE ||
+      sqlite3_step(q.get()) != SQLITE_DONE)
+    return false;
+  *size = parsed;
+  return true;
+}
+bool ReadPatternSize(uint32_t user, uint32_t* size) {
+  Snapshot db;
+  return db.Open("/data/system/locksettings.db") && ReadPatternSizeFromDatabase(db.get(), user, size);
 }
 bool ReadProtectorKey(uint64_t protector, Bytes* key, int* security_level) {
   Clear(*key);

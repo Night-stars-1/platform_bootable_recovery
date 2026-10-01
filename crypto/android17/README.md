@@ -217,7 +217,7 @@ project. The helper never compiles or flashes anything.
   requires the maintainer to verify that the normal platform does not use one).
   Do not insert a guessed/public seed or bypass a seed check.
 - Internal users only; UI currently exposes user 0. No work-profile challenge,
-  adoptable storage, escrow-token unlock, custom pattern grids or non-ASCII
+  adoptable storage, escrow-token unlock, grids outside 3x3..6x6 or non-ASCII
   on-screen password keyboard is provided by this change.
 - Read-only mounting deliberately refuses filesystems needing recovery. It does
   not make a damaged/unclean filesystem readable by writing to it.
@@ -250,11 +250,12 @@ Recovery variants. It uses the same backend sources with normal Android
 dependencies; the production backend remains `recovery: true`. These fixture
 tests do not validate Recovery linking, HAL operation or device decryption.
 
-ScreenRecoveryUI now asks for patterns on a touchable 3-by-3 dot grid, with
+ScreenRecoveryUI asks for patterns on a touchable 3-by-3 through 6-by-6 grid, with
 selected dots, connecting strokes and explicit Unlock/Clear/Cancel controls.
 Starting a new stroke on a dot clears the previous drawing; a pattern needs
 at least four dots and finger-up before explicit submission. Crossing an
-unvisited midpoint follows Android's rule. Volume keys navigate the same grid
+unvisited cells on rows, columns and 45-degree diagonals follows the reviewed
+uwuAOSP LockPatternView rule. Volume keys navigate the same grid
 and controls; Power selects the highlighted target when touch is unavailable.
 Custom/stub UIs can decline the optional pattern API without affecting sideload.
 The UI views the caller's locked credential memory and neither logs nor copies
@@ -262,6 +263,22 @@ the pattern into a text/menu string. Cancelling clears it and leaving the page
 redraws both framebuffer pages. Ordinary menus retain their swipe scrolling.
 Synthetic grid/midpoint/sparse-motion/layout fixtures are included in
 `tests/unit/screen_ui_test.cpp`; no test attempts real credential verification.
+
+The backend reads `lock_pattern_size` with the read-only locksettings snapshot
+helper, after metadata and DE restoration.
+An absent setting defaults to 3, as on standard AOSP installs. A failed database
+read, duplicate/malformed value or unsupported size stops before credential
+submission; there is no manual override or automatic trial of other sizes.
+Each cell encodes as one byte `row * gridSize + column + '1'`, including indexes
+above 8. The optional `recovery_crypto_get_pattern_size_v1` export leaves the
+required v1 backend ABI structure intact. A custom backend lacking the export
+retains its old 3x3 contract. The private worker protocol is v2, so Recovery and
+its worker must be rebuilt together.
+
+Grid-size, per-user/default/error and encoding fixtures are in
+`crypto/android17/tests/native_test.cpp`; protocol bounds/duplicate fixtures are
+in `crypto/tests/protocol_test.cpp`. These new native tests have not been run;
+source parsing and layout previews do not verify authentication on a device.
 
 For each enabled device, test empty LSKF, PIN, password, pattern, Weaver and
 Gatekeeper paths as applicable, wrong credentials, hardware throttle, missing

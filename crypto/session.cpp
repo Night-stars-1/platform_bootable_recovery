@@ -130,7 +130,7 @@ Result Session::Unlock(const Credential& credential, const std::function<void(St
   if (now < retry_after_) {
     auto seconds = std::chrono::duration_cast<std::chrono::seconds>(retry_after_ - now).count() + 1;
     return {Status::Throttled, Stage::CredentialKeys, credential_type_,
-            static_cast<uint32_t>(seconds)};
+            static_cast<uint32_t>(seconds), pattern_size_};
   }
   return Exchange(kUnlock, &credential, progress);
 }
@@ -142,11 +142,13 @@ Result Session::Exchange(uint32_t operation, const Credential* credential,
   request->operation = operation;
   request->user_id = user_id_;
   request->credential_type = operation == kPrepare ? RC_CREDENTIAL_NONE : credential_type_;
+  request->pattern_size = operation == kPrepare ? RECOVERY_CRYPTO_DEFAULT_PATTERN_SIZE : pattern_size_;
   if (credential) {
     request->length = static_cast<uint32_t>(credential->size());
     if (request->length) memcpy(request->credential, credential->data(), request->length);
   }
-  if (!ValidRequest(*request)) return {Status::WrongCredential, Stage::Credential, credential_type_};
+  if (!ValidRequest(*request))
+    return {Status::WrongCredential, Stage::Credential, credential_type_, 0, pattern_size_};
   if (send(fd_, request, sizeof(*request), MSG_NOSIGNAL) != static_cast<ssize_t>(sizeof(*request))) {
     Stop(); return {Status::WorkerFailed};
   }
@@ -171,14 +173,19 @@ Result Session::Exchange(uint32_t operation, const Credential* credential,
       if (progress) progress(static_cast<Stage>(reply.stage));
       continue;
     }
+    if (operation == kUnlock &&
+        (reply.credential_type != credential_type_ || reply.pattern_size != pattern_size_)) {
+      Stop(); return {Status::InvalidBackend};
+    }
     Result result{static_cast<Status>(reply.status), static_cast<Stage>(reply.stage),
-                  reply.credential_type, reply.retry_seconds};
+                  reply.credential_type, reply.retry_seconds, reply.pattern_size};
     if (result.status == Status::CredentialRequired) {
       if (operation != kPrepare || result.credential_type == RC_CREDENTIAL_NONE) {
         Stop(); return {Status::InvalidBackend};
       }
       prepared_ = true;
       credential_type_ = result.credential_type;
+      pattern_size_ = result.pattern_size;
     } else if (result.status == Status::Throttled) {
       retry_after_ = std::chrono::steady_clock::now() + std::chrono::seconds(result.retry_seconds);
     } else if (result.status == Status::Ready) {

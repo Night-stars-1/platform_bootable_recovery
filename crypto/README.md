@@ -45,6 +45,8 @@ accepts a user ID for future multi-user callers. Work profiles and adoptable
 storage are not supported by this UI. PIN, Android pattern cells and basic ASCII
 passwords are accepted locally using Recovery's touch/key menu; this is not a
 full touchscreen keyboard, and non-ASCII passwords need an input extension.
+Patterns use a touchable grid. The generic Android 17 backend reads the saved
+3x3, 4x4, 5x5 or 6x6 size per user; it never tries several sizes automatically.
 
 ## Backend registration
 
@@ -82,6 +84,14 @@ and return to the regular menu. A failed unlock never falls back to a wipe.
 `include/recovery_crypto/backend.h` is the versioned C ABI. Do not expose C++ STL
 objects across it. All callbacks run in one worker session, preserving platform
 library state across metadata, DE and CE stages:
+
+The v1 structure and required export retain their original layout. A backend
+may additionally export `recovery_crypto_get_pattern_size_v1(user, size)` to
+report a saved 3..6 grid size after credential discovery. Without that export,
+the worker keeps the original 3x3 contract. Both IPC peers use protocol v2 and
+must be rebuilt together; older worker binaries are rejected. Reported size is
+bound to the session and cannot be changed by an unlock request. Pattern cells
+are zero-based row-major bytes, not ASCII decimal numbers.
 
 1. `prepare_services`: perform bounded lookups for the device's actual
    KeyMint/Keymaster, Gatekeeper or Weaver, SharedSecret and keystore2 services.

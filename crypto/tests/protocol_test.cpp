@@ -70,4 +70,38 @@ TEST(RecoveryCryptoProtocol, RejectsFalseThrottleAndUnrecognizedReplies) {
   EXPECT_EQ(Status::MissingKey, BackendStatus(RC_EXISTING_KEY_MISSING));
   EXPECT_EQ(Status::UpgradeRequired, BackendStatus(RC_KEY_UPGRADE_REQUIRED));
 }
+TEST(RecoveryCryptoProtocol, AcceptsSavedGridsAndChecksEveryCell) {
+  Request r;
+  r.operation = kUnlock;
+  r.credential_type = RC_CREDENTIAL_PATTERN;
+  Reply reply;
+  reply.credential_type = RC_CREDENTIAL_PATTERN;
+  for (uint32_t n = 3; n <= 6; ++n) {
+    r.pattern_size = reply.pattern_size = n;
+    r.length = n * n;
+    for (uint32_t i = 0; i < r.length; ++i) r.credential[i] = i;
+    EXPECT_TRUE(ValidRequest(r));
+    EXPECT_TRUE(ValidReply(reply));
+    r.credential[r.length - 1] = 0;
+    EXPECT_FALSE(ValidRequest(r));
+    r.credential[r.length - 1] = n * n;
+    EXPECT_FALSE(ValidRequest(r));
+    r.credential[r.length - 1] = n * n - 1;
+    ++r.length;
+    EXPECT_FALSE(ValidRequest(r));
+  }
+  r.pattern_size = reply.pattern_size = 7;
+  EXPECT_FALSE(ValidRequest(r));
+  EXPECT_FALSE(ValidReply(reply));
+  r.pattern_size = reply.pattern_size = 2;
+  EXPECT_FALSE(ValidRequest(r));
+  EXPECT_FALSE(ValidReply(reply));
+  r = Request{};
+  r.operation = kPrepare;
+  r.pattern_size = 4;
+  EXPECT_FALSE(ValidRequest(r));
+  reply.credential_type = RC_CREDENTIAL_PIN;
+  reply.pattern_size = 4;
+  EXPECT_FALSE(ValidReply(reply));
+}
 }  // namespace recovery_crypto

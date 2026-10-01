@@ -733,14 +733,17 @@ void ScreenRecoveryUI::DrawPatternPageLocked() {
   Label(canvas, m, m.inset, y, m.width - 2 * m.inset,
         "Connect at least 4 dots, then tap Unlock", Font::Small, palette.secondary);
   y += LineHeight(FontPixels(Font::Small, m.width)) + Dp(m.width, 20);
-  auto layout = PatternBounds(m, y, ScreenHeight() - std::max(margin_height_, Dp(m.width, 24)));
+  auto layout = PatternBounds(m, y, ScreenHeight() - std::max(margin_height_, Dp(m.width, 24)),
+                              pattern_input_->GridSize());
   DrawPattern(canvas, m, layout, *pattern_input_, pattern_dragging_,
               pattern_finger_.x(), pattern_finger_.y(), pattern_focus_, palette);
 }
 
 bool ScreenRecoveryUI::ReadPattern(recovery_ui::PatternInput& input) {
   using namespace recovery_m3e;
-  if (IsKeyInterrupted()) { input.Clear(); return false; }
+  if (IsKeyInterrupted() || input.GridSize() < 3 || input.GridSize() > 6) {
+    input.Clear(); return false;
+  }
   {
     std::lock_guard<std::mutex> lock(updateMutex);
     input.Clear();
@@ -766,20 +769,23 @@ bool ScreenRecoveryUI::ReadPattern(recovery_ui::PatternInput& input) {
     int top = std::max(margin_height_, Dp(m.width, 24));
     int y = HeaderBottom(m, top, false) + LineHeight(FontPixels(Font::Body, m.width)) +
             LineHeight(FontPixels(Font::Small, m.width)) + Dp(m.width, 26);
-    auto layout = PatternBounds(m, y, ScreenHeight() - std::max(margin_height_, Dp(m.width, 24)));
+    auto layout = PatternBounds(m, y, ScreenHeight() - std::max(margin_height_, Dp(m.width, 24)),
+                                input.GridSize());
     auto invoke = [&](int action) {
-      if (action == -1 || action == 11) done = true;
-      else if (action == 10) { input.Clear(); pattern_dragging_ = false; }
-      else if (action == 9 && !pattern_dragging_ && input.Size() >= 4) { accepted = done = true; }
-      else if (action >= 0 && action < 9) input.Select(action);
+      if (action == -1 || action == layout.CancelAction()) done = true;
+      else if (action == layout.ClearAction()) { input.Clear(); pattern_dragging_ = false; }
+      else if (action == layout.UnlockAction() && !pattern_dragging_ && input.Size() >= 4) {
+        accepted = done = true;
+      } else if (action >= 0 && action < layout.CellCount()) input.Select(action);
     };
     if (event.type() == EventType::KEY) {
       if (event.key() == KEY_BACK || event.key() == KEY_ESC) done = true;
-      else if (event.key() == KEY_BACKSPACE || event.key() == KEY_DELETE) invoke(10);
+      else if (event.key() == KEY_BACKSPACE || event.key() == KEY_DELETE) invoke(layout.ClearAction());
       else if (!pattern_dragging_ && (event.key() == KEY_UP || event.key() == KEY_VOLUMEUP)) {
-        pattern_focus_ = pattern_focus_ <= -1 ? 11 : pattern_focus_ - 1;
+        pattern_focus_ = pattern_focus_ <= -1 ? layout.CancelAction() : pattern_focus_ - 1;
       } else if (!pattern_dragging_ && (event.key() == KEY_DOWN || event.key() == KEY_VOLUMEDOWN)) {
-        pattern_focus_ = pattern_focus_ < -1 || pattern_focus_ == 11 ? -1 : pattern_focus_ + 1;
+        pattern_focus_ = pattern_focus_ < -1 || pattern_focus_ == layout.CancelAction() ?
+                         -1 : pattern_focus_ + 1;
       } else if (!pattern_dragging_ && (event.key() == KEY_POWER || event.key() == KEY_ENTER)) {
         if (pattern_focus_ == -2) pattern_focus_ = 0;
         else invoke(pattern_focus_);

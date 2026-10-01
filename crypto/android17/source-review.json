@@ -17,6 +17,9 @@
     "system/security/keystore2/src/database.rs": "c8593cb3582391755731a57fa2b917dcc3871c1991e233578c2eb8d388d7f257",
     "system/security/keystore2/src/security_level.rs": "0ce4ead3ab515e73d2510261de1c85099d57745040783b9ebc40ed0067bca0b2",
     "system/security/keystore2/src/shared_secret_negotiation.rs": "002e8e2e5224eba1e43444eef514f1a7179f028c25706825434e2971b8bb5b82",
-    "system/libhidl/transport/ServiceManagement.cpp": "cc620db3f2e2fae3b99be62de8bb36ae30c5c20621e54c3ffeb70bfdc75f754a"
+    "system/libhidl/transport/ServiceManagement.cpp": "cc620db3f2e2fae3b99be62de8bb36ae30c5c20621e54c3ffeb70bfdc75f754a",
+    "frameworks/base/core/java/com/android/internal/widget/LockPatternUtils.java": "eb6c8b265f32e4b79d9ff85cb383a2e67c88180c92cd2c2e5ad6b0439351d5fe",
+    "frameworks/base/core/java/com/android/internal/widget/LockPatternView.java": "806b5a752c31ca73d78d3bcb9c0b88d4a8aa0cc4a76c8096d43ba097f0197760",
+    "frameworks/base/core/java/android/provider/Settings.java": "a52e4a4a2d9c09100cd9c0e26562e87460abf12245cb13071a0cc174735dbf89"
   }
 }
