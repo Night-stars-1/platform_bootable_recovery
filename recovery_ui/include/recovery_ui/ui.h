@@ -20,6 +20,7 @@
 #define RECOVERY_UI_H
 
 #include "recovery_ui/install_status.h"
+#include "recovery_ui/pattern_input.h"
 
 #include <linux/input.h>  // KEY_MAX
 
@@ -116,6 +117,9 @@ class RecoveryUI {
     EXTRA,
     KEY,
     TOUCH,
+    TOUCH_DOWN,
+    TOUCH_MOVE,
+    TOUCH_UP,
   };
 
   class InputEvent {
@@ -129,6 +133,7 @@ class RecoveryUI {
     explicit InputEvent(const Point& pos) : type_(EventType::TOUCH), evt_({ 0 }) {
       evt_.pos = pos;
     }
+    InputEvent(EventType type, const Point& pos) : type_(type), evt_({ 0 }) { evt_.pos = pos; }
 
     EventType type() const {
       return type_;
@@ -227,6 +232,9 @@ class RecoveryUI {
   // Returns true if it supports touch inputs.
   virtual bool HasTouchScreen() const;
 
+  // Optional graphical pattern input. Custom/stub UIs can decline it safely.
+  virtual bool ReadPattern(recovery_ui::PatternInput&) { return false; }
+
   // Erases any queued-up keys.
   virtual void FlushKeys();
 
@@ -322,6 +330,10 @@ class RecoveryUI {
  protected:
   void EnqueueKey(int key_code);
   void EnqueueTouch(const Point& pos);
+  void EnqueueGesture(EventType type, const Point& pos);
+  // Only the pattern page opts into raw gestures; ordinary menus keep swipe scrolling.
+  std::atomic<bool> gesture_input_{false};
+  std::atomic<bool> discard_touch_until_press_{false};
 
   // The normal and dimmed brightness percentages (default: 50 and 25, which means 50% and 25% of
   // the max_brightness). Because the absolute values may vary across devices. These two values can
