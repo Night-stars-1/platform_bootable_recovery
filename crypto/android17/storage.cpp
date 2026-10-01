@@ -18,10 +18,12 @@
 #include <sys/statfs.h>
 #include <algorithm>
 #include <chrono>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include "../secret_memory.h"
 #include "dm_ioctl_compat.h"
+#include "diagnostic.h"
 #include "files.h"
 #include "key_storage.h"
 #include "primitives.h"
@@ -148,17 +150,22 @@ int Storage::PrepareKey(Hal& hal, View persistent, KeyMode mode, Bytes* ephemera
   }
   if (mode == KeyMode::WrappedV0) return hal.ExportStorageKey(persistent, ephemeral);
   unique_fd fd(open(data_.blk_device.c_str(), O_RDONLY | O_CLOEXEC));
-  if (fd.get() < 0) return RC_IO_ERROR;
+  if (fd.get() < 0)
+    return Diagnostic(RC_IO_ERROR, Checkpoint::StorageExport, CodeSource::Errno, errno);
   ephemeral->resize(128);
   struct blk_crypto_prepare_key_arg arg{};
   arg.lt_key_ptr = reinterpret_cast<uintptr_t>(persistent.data());
   arg.lt_key_size = persistent.size();
   arg.eph_key_ptr = reinterpret_cast<uintptr_t>(ephemeral->data());
   arg.eph_key_size = ephemeral->size();
-  if (ioctl(fd.get(), BLKCRYPTOPREPAREKEY, &arg) != 0 || !arg.eph_key_size ||
-      arg.eph_key_size > 128) {
+  if (ioctl(fd.get(), BLKCRYPTOPREPAREKEY, &arg) != 0) {
+    const int code = errno;
     Clear(*ephemeral);
-    return RC_IO_ERROR;
+    return Diagnostic(RC_IO_ERROR, Checkpoint::StorageExport, CodeSource::Errno, code);
+  }
+  if (!arg.eph_key_size || arg.eph_key_size > 128) {
+    Clear(*ephemeral);
+    return Diagnostic(RC_IO_ERROR, Checkpoint::StorageExport);
   }
   ephemeral->resize(arg.eph_key_size);
   return RC_OK;
@@ -266,21 +273,26 @@ static bool GetPolicy(int fd, fscrypt_get_policy_ex_arg* policy) {
   return ioctl(fd, FS_IOC_GET_ENCRYPTION_POLICY_EX, policy) == 0;
 }
 int Storage::Install(Hal& hal, View persistent, const std::string& directory) {
-  if (persistent.empty() || persistent.size() > 65536) return RC_IO_ERROR;
+  if (persistent.empty() || persistent.size() > 65536)
+    return Diagnostic(RC_IO_ERROR, Checkpoint::FscryptKeyShape);
   Bytes key;
   int result = PrepareKey(hal, persistent, mode_, &key);
   if (result != RC_OK) return result;
   if (key.empty() || key.size() > 128 ||
       (mode_ == KeyMode::Raw && key.size() != 32 && key.size() != 64))
-    return RC_IO_ERROR;
+    return Diagnostic(RC_IO_ERROR, Checkpoint::FscryptKeyShape);
   auto policy_fd = OpenDirectory(directory);
+  if (policy_fd.get() < 0)
+    return Diagnostic(RC_IO_ERROR, Checkpoint::FscryptPolicy, CodeSource::Errno, errno);
   auto mount_fd = OpenDirectory("/data");
+  if (mount_fd.get() < 0)
+    return Diagnostic(RC_IO_ERROR, Checkpoint::FscryptPolicy, CodeSource::Errno, errno);
   fscrypt_get_policy_ex_arg policy{};
-  if (policy_fd.get() < 0 || mount_fd.get() < 0 || !GetPolicy(policy_fd.get(), &policy))
-    return RC_IO_ERROR;
+  if (!GetPolicy(policy_fd.get(), &policy))
+    return Diagnostic(RC_IO_ERROR, Checkpoint::FscryptPolicy, CodeSource::Errno, errno);
   bool v1 = policy.policy.version == FSCRYPT_POLICY_V1;
   if ((v1 ? 1u : policy.policy.version == FSCRYPT_POLICY_V2 ? 2u : 0u) != policy_version_)
-    return RC_UNSUPPORTED;
+    return Diagnostic(RC_UNSUPPORTED, Checkpoint::FscryptPolicy);
   Bytes buffer(sizeof(fscrypt_add_key_arg) + key.size(), 0);
   auto* arg = reinterpret_cast<fscrypt_add_key_arg*>(buffer.data());
   arg->raw_size = key.size();
@@ -294,21 +306,23 @@ int Storage::Install(Hal& hal, View persistent, const std::string& directory) {
     SHA512(first.data(), first.size(), second.data());
     if (CRYPTO_memcmp(second.data(), policy.policy.v1.master_key_descriptor,
                       FSCRYPT_KEY_DESCRIPTOR_SIZE) != 0)
-      return RC_IO_ERROR;
+      return Diagnostic(RC_IO_ERROR, Checkpoint::FscryptDescriptor);
     arg->key_spec.type = FSCRYPT_KEY_SPEC_TYPE_DESCRIPTOR;
     memcpy(arg->key_spec.u.descriptor, second.data(), FSCRYPT_KEY_DESCRIPTOR_SIZE);
   } else
     arg->key_spec.type = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
-  if (ioctl(mount_fd.get(), FS_IOC_ADD_ENCRYPTION_KEY, arg) != 0) return RC_IO_ERROR;
+  if (ioctl(mount_fd.get(), FS_IOC_ADD_ENCRYPTION_KEY, arg) != 0)
+    return Diagnostic(RC_IO_ERROR, Checkpoint::FscryptAddKey, CodeSource::Errno, errno);
   if (!v1 && CRYPTO_memcmp(arg->key_spec.u.identifier, policy.policy.v2.master_key_identifier,
                            FSCRYPT_KEY_IDENTIFIER_SIZE) != 0)
-    return RC_IO_ERROR;
+    return Diagnostic(RC_IO_ERROR, Checkpoint::FscryptIdentifier);
   fscrypt_get_key_status_arg status{};
   status.key_spec = arg->key_spec;
-  if (ioctl(mount_fd.get(), FS_IOC_GET_ENCRYPTION_KEY_STATUS, &status) != 0 ||
-      status.status != FSCRYPT_KEY_STATUS_PRESENT)
-    return RC_IO_ERROR;
-  return RC_OK;
+  if (ioctl(mount_fd.get(), FS_IOC_GET_ENCRYPTION_KEY_STATUS, &status) != 0)
+    return Diagnostic(RC_IO_ERROR, Checkpoint::FscryptStatus, CodeSource::Errno, errno);
+  if (status.status != FSCRYPT_KEY_STATUS_PRESENT)
+    return Diagnostic(RC_IO_ERROR, Checkpoint::FscryptStatus);
+  return Diagnostic(RC_OK, Checkpoint::FscryptStatus);
 }
 int Storage::LoadDe(Hal& hal, uint32_t user) {
   Bytes system;
@@ -323,10 +337,11 @@ int Storage::LoadDe(Hal& hal, uint32_t user) {
   return Install(hal, de, "/data/system_de/" + std::to_string(user));
 }
 int Storage::LoadCe(Hal& hal, uint32_t user, View secret) {
-  if (secret.empty()) return RC_IO_ERROR;
+  if (secret.empty()) return Diagnostic(RC_IO_ERROR, Checkpoint::FscryptKeyShape);
   std::string root = "/data/misc/vold/user_keys/ce/" + std::to_string(user);
   std::vector<std::string> directories;
-  if (!ListDirectories(root, &directories)) return RC_EXISTING_KEY_MISSING;
+  if (!ListDirectories(root, &directories))
+    return Diagnostic(RC_EXISTING_KEY_MISSING, Checkpoint::CeKeyDirectories);
   std::sort(directories.begin(), directories.end(), std::greater<>());
   bool attempted = false;
   for (const auto& directory : directories) {
@@ -346,6 +361,6 @@ int Storage::LoadCe(Hal& hal, uint32_t user, View secret) {
     if (result == RC_OK) return result;
     if (result == RC_KEY_UPGRADE_REQUIRED || result == RC_UNSUPPORTED) return result;
   }
-  return attempted ? RC_IO_ERROR : RC_EXISTING_KEY_MISSING;
+  return attempted ? RC_IO_ERROR : Diagnostic(RC_EXISTING_KEY_MISSING, Checkpoint::CeKeyDirectories);
 }
 }  // namespace recovery_crypto::android17

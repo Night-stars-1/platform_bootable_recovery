@@ -4,6 +4,7 @@
 #include "synthetic_password.h"
 #include <algorithm>
 #include <cstdio>
+#include "diagnostic.h"
 #include "files.h"
 #include "primitives.h"
 #include "sqlite_snapshot.h"
@@ -121,31 +122,34 @@ int SyntheticPassword::Unlock(Hal& hal, uint32_t type, View credential, Bytes* f
   Clear(*fbe_key);
   if (!protector_ || blob_.size() < 2 || type != type_ ||
       credential.size() > RECOVERY_CRYPTO_MAX_CREDENTIAL)
-    return RC_IO_ERROR;
+    return Diagnostic(RC_IO_ERROR, Checkpoint::CredentialFormat);
   // Read the database before authenticating: SP keys have a short auth timeout,
   // and a large snapshot must not consume that window after Gatekeeper succeeds.
   Bytes key;
   int level = 0;
-  if (!ReadProtectorKey(protector_, &key, &level)) return RC_EXISTING_KEY_MISSING;
-  if (level != hal.security_level()) return RC_UNSUPPORTED;
+  if (!ReadProtectorKey(protector_, &key, &level))
+    return Diagnostic(RC_EXISTING_KEY_MISSING, Checkpoint::ProtectorKey);
+  if (level != hal.security_level()) return Diagnostic(RC_UNSUPPORTED, Checkpoint::ProtectorKey);
+  Diagnostic(RC_OK, Checkpoint::ProtectorKey);
   Bytes password;
   if (type == RC_CREDENTIAL_NONE) {
-    if (!credential.empty()) return RC_IO_ERROR;
+    if (!credential.empty()) return Diagnostic(RC_IO_ERROR, Checkpoint::CredentialFormat);
     auto value = AsBytes("default-password");
     password.assign(value.begin(), value.end());
   } else if (type == RC_CREDENTIAL_PATTERN) {
-    if (!EncodePatternCredential(credential, pattern_size_, &password)) return RC_IO_ERROR;
+    if (!EncodePatternCredential(credential, pattern_size_, &password))
+      return Diagnostic(RC_IO_ERROR, Checkpoint::CredentialFormat);
   } else {
     if (credential.empty() ||
         (type == RC_CREDENTIAL_PIN && !std::all_of(credential.begin(), credential.end(),
                                                    [](uint8_t c) { return c >= '0' && c <= '9'; })))
-      return RC_IO_ERROR;
+      return Diagnostic(RC_IO_ERROR, Checkpoint::CredentialFormat);
     password.assign(credential.begin(), credential.end());
   }
   Bytes stretched;
   if (password_) {
     if (!Stretch(password, password_->salt, password_->n, password_->r, password_->p, &stretched))
-      return RC_UNSUPPORTED;
+      return Diagnostic(RC_UNSUPPORTED, Checkpoint::Stretch);
   } else {
     stretched = password;
     stretched.resize(32, 0);
@@ -166,10 +170,11 @@ int SyntheticPassword::Unlock(Hal& hal, uint32_t type, View credential, Bytes* f
           hal.VerifyGatekeeper(100000 + user_, password_->handle, gk_password, &auth, retry);
       if (result != RC_OK) return result;
     } else if (type != RC_CREDENTIAL_NONE)
-      return RC_EXISTING_KEY_MISSING;
+      return Diagnostic(RC_EXISTING_KEY_MISSING, Checkpoint::GatekeeperVerify);
     Bytes discardable;
-    if (!ReadFile(State("secdis"), &discardable, 16384)) return RC_EXISTING_KEY_MISSING;
-    if (discardable.size() != 16384) return RC_IO_ERROR;
+    if (!ReadFile(State("secdis"), &discardable, 16384))
+      return Diagnostic(RC_EXISTING_KEY_MISSING, Checkpoint::SpDiscardable);
+    if (discardable.size() != 16384) return Diagnostic(RC_IO_ERROR, Checkpoint::SpDiscardable);
     auto hash = PersonalizedHash("secdiscardable-transform", discardable);
     secret = Concat(stretched, hash);
   }
@@ -178,11 +183,13 @@ int SyntheticPassword::Unlock(Hal& hal, uint32_t type, View credential, Bytes* f
   Bytes intermediate, sp;
   int result = RC_IO_ERROR;
   if (blob_[0] == 1) {
-    if (!GcmDecrypt(wrapping, View(blob_).subspan(2), &intermediate)) return RC_IO_ERROR;
+    if (!GcmDecrypt(wrapping, View(blob_).subspan(2), &intermediate))
+      return Diagnostic(RC_IO_ERROR, Checkpoint::SpSoftwareDecrypt);
     result = hal.Decrypt(key, intermediate, {}, &auth, &sp);
   } else {
     result = hal.Decrypt(key, View(blob_).subspan(2), {}, &auth, &intermediate);
-    if (result == RC_OK && !GcmDecrypt(wrapping, intermediate, &sp)) return RC_IO_ERROR;
+    if (result == RC_OK && !GcmDecrypt(wrapping, intermediate, &sp))
+      return Diagnostic(RC_IO_ERROR, Checkpoint::SpSoftwareDecrypt);
   }
   if (result != RC_OK) return result;
   // Android's synthetic password is the ASCII hex of a personalized SHA-512 digest.
@@ -190,17 +197,19 @@ int SyntheticPassword::Unlock(Hal& hal, uint32_t type, View credential, Bytes* f
   if (sp.size() != 128 || !std::all_of(sp.begin(), sp.end(), [](uint8_t c) {
         return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
       }))
-    return RC_UNSUPPORTED;
+    return Diagnostic(RC_UNSUPPORTED, Checkpoint::SpFormat);
+  Diagnostic(RC_OK, Checkpoint::SpFormat);
   Bytes handle;
   bool missing = false;
   if (ReadFile(State("handle", true), &handle, 4096, &missing)) {
     auto gk_password = SpSubkey(blob_[0], sp, "sp-gk-authentication");
     Authentication refreshed;
     result = hal.VerifyGatekeeper(user_, handle, gk_password, &refreshed, retry);
-    if (result != RC_OK) return result;
+    if (result != RC_OK) return Diagnostic(result, Checkpoint::SpHandle);
   } else if (!missing)
-    return RC_IO_ERROR;
+    return Diagnostic(RC_IO_ERROR, Checkpoint::SpHandle);
   *fbe_key = SpSubkey(blob_[0], sp, "fbe-key");
-  return fbe_key->size() == (blob_[0] == 3 ? 32u : 64u) ? RC_OK : RC_IO_ERROR;
+  return Diagnostic(fbe_key->size() == (blob_[0] == 3 ? 32u : 64u) ? RC_OK : RC_IO_ERROR,
+                    Checkpoint::SpDerive);
 }
 }  // namespace recovery_crypto::android17

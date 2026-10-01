@@ -24,7 +24,7 @@ recovery_crypto_android17_defaults_type {
         android17: {
             enabled: true,
             srcs: [
-                "backend.cpp", "config.cpp", "files.cpp", "hal.cpp", "key_storage.cpp",
+                "backend.cpp", "config.cpp", "diagnostic.cpp", "files.cpp", "hal.cpp", "key_storage.cpp",
                 "primitives.cpp", "sqlite_snapshot.cpp", "storage.cpp", "synthetic_password.cpp",
             ],
             header_libs: ["librecovery_crypto_backend_headers"],

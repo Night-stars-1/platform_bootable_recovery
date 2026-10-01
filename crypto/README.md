@@ -158,6 +158,9 @@ Credentials never enter argv, environment variables, files or log output. Input
 and IPC request buffers use locked, dump-excluded memory and are wiped on exit.
 The worker has core dumps disabled and stdout/stderr redirected to `/dev/null`.
 Adapters must also suppress Binder/vendor/platform logs containing secrets.
+The optional Android 17 backend separately appends fixed, typed diagnostic
+checkpoints and numeric error codes to the existing `/tmp/recovery.log`; this
+does not forward worker or vendor output. See its [diagnostic guide](android17/README.md#locating-an-unlock-failure).
 Each operation has a 45-second deadline, even if the backend emits progress.
 Worker isolation contains a process crash or hang; it cannot undo kernel/TEE
 effects caused by buggy code running as root. Review and test the backend before
