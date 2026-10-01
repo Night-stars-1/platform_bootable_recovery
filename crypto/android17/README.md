@@ -61,6 +61,12 @@ Successful or partial key installation remains in the kernel until reboot; the
 worker releases its own secrets/handles without evicting those keys. A hung or
 crashed worker is still bounded by the parent framework's deadline.
 
+The private device-mapper table-load and activation requests use libdm's stable
+`4.0.0` request ABI, rather than the newer version of the build's Linux headers.
+This follows `DeviceMapper::InitIo` and works with older supported kernel minors.
+The read-only mapping and secure, wiped ioctl buffer remain unchanged; neither
+the table nor its key is sent through libdm's table-debug logging path.
+
 ## Opt-in device adaptation
 
 The backend is **disabled by default at the Soong module level**. Its HAL/SQLite
