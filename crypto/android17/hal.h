@@ -16,6 +16,8 @@
 #include "secure_bytes.h"
 namespace recovery_crypto::android17 {
 namespace km = aidl::android::hardware::security::keymint;
+// Pure bounds/format check, independent of HAL lookup or authentication.
+bool ValidGatekeeperInput(uint32_t user, View handle);
 struct Authentication {
   std::optional<km::HardwareAuthToken> token;
   ~Authentication() {

@@ -23,6 +23,7 @@ static const char* Name(Checkpoint point) {
     case Checkpoint::CredentialFormat: return "credential_format";
     case Checkpoint::ProtectorKey: return "protector_key";
     case Checkpoint::Stretch: return "stretch";
+    case Checkpoint::GatekeeperInput: return "gatekeeper_input";
     case Checkpoint::GatekeeperVerify: return "gatekeeper_verify";
     case Checkpoint::GatekeeperToken: return "gatekeeper_token";
     case Checkpoint::WeaverRead: return "weaver_read";
