@@ -36,6 +36,7 @@ recovery_crypto_android17_defaults_type {
                 "android.hardware.gatekeeper-V1-ndk",
                 "android.hardware.weaver-V3-ndk",
                 "android.hardware.gatekeeper@1.0", "android.hardware.weaver@1.0",
+                "android.hardware.keymaster@4.0", "android.hardware.keymaster@4.1",
             ],
             static_libs: ["libfstab", "libdm", "libext2_uuid", "librecovery_crypto_sqlite"],
         },

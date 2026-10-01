@@ -15,8 +15,8 @@ are provided for the maintainer to compile/run.
 1. Read a root-owned, non-writable ramdisk profile; connect to the selected AIDL
    KeyMint device. Validate its security level, negotiate the configured
    SharedSecret participants and connect to AIDL or HIDL Gatekeeper/Weaver.
-   AIDL uses non-lazy `checkService`. HIDL `tryGetService` may ask
-   hwservicemanager to start the configured manifest-declared lazy service.
+   AIDL uses non-lazy `checkService`. The reviewed Recovery libhidl resolves
+   HIDL through local passthrough implementations, not hwservicemanager.
    No KeyMint generation, enrollment or deletion runs.
    A concurrently running keystore2 daemon is refused to avoid replacing another
    negotiator's agreement. Device init/manifest must provide only reviewed HALs.
@@ -99,17 +99,28 @@ metadata_encryption=aes-256-xts:wrappedkey_v0
 These are format examples, not device block paths. Copy only the device's actual
 `/metadata` and `/data` entries; preserve its real filesystem/mount options.
 Configure the exact KeyMint, Gatekeeper, Weaver, SecureClock and **all** relevant
-AIDL SharedSecret participants. Set transport to `none` with an empty instance
+SharedSecret participants. `sharedsecret_services` lists AIDL services;
+optional `sharedsecret_hidl_instances=4.1/default,4.1/strongbox` selects the
+highest advertised HIDL Keymaster version per security level. Do not configure
+both 4.0 and 4.1 for the same instance. All configured participants receive the
+same sorted parameter list and must return the same checksum. Devices without
+that option keep the AIDL-only path. Set transport to `none` with an empty instance
 only when that service is genuinely not needed by any protector on that device.
 Gatekeeper can still be needed for the SP SID after Weaver verification.
 
 The profile cannot run commands, pick arbitrary backend libraries, disable
 authentication or choose a key blob from user input. It issues no arbitrary init
-commands; HIDL lookup may start the configured lazy HAL through hwservicemanager.
+commands; HIDL requires the reviewed local passthrough implementation in Recovery.
 Vendor HAL binaries/libraries, firmware availability, Binder
 drivers, compatible OS/security-patch properties, VINTF and narrowly scoped
 SELinux permissions must be supplied and reviewed by the device maintainer.
 Keep SELinux enforcing. There is no universal vendor-security service bundle.
+If a passthrough HAL requires vendor-internal properties, keep it in an appropriate
+vendor HAL service domain and provide a reviewed device-owned AIDL protocol bridge.
+Do not grant coredomain Recovery access that violates vendor property isolation.
+Recovery's servicemanager uses VintfObjectRecovery, which merges fragments under
+`/system/etc/vintf/manifest/`; add a unique Recovery fragment rather than replacing
+existing health/fastboot declarations or the normal Android vendor manifest.
 
 ## Recovery dependency preparation
 
@@ -143,9 +154,10 @@ run this helper or sync the other projects.
 - Requires an actual AIDL KeyMint implementation. HIDL-only Keymaster devices
   need a separate compatibility adapter; this code does not start keystore2's
   compatibility daemon or guess a bridge.
-- HIDL Gatekeeper 1.0 and Weaver 1.0 are supported alongside AIDL; mixed HIDL/AIDL
-  **SharedSecret** negotiation is not supported. Such devices need a reviewed
-  negotiator rather than silently omitting a participant.
+- HIDL Gatekeeper 1.0, Weaver 1.0 and Keymaster 4.0/4.1 SharedSecret negotiation
+  are supported alongside AIDL. HIDL HALs need Recovery passthrough libraries.
+  A vendor offering only a service/factory needs a reviewed device-tree bridge;
+  a manifest alone does not supply a passthrough implementation.
 - Uses the reviewed keystore2 live client-key schema with `blobentry.state`,
   SELinux domain 2, locksettings namespace 103 and known UUID encodings. Legacy
   APP-namespace keys, super-encrypted or boot-level-bound blobs and unknown blob

@@ -5,6 +5,8 @@
 #include <aidl/android/hardware/security/keymint/IKeyMintOperation.h>
 #include <aidl/android/hardware/security/sharedsecret/ISharedSecret.h>
 #include <android/binder_manager.h>
+#include <android/hardware/keymaster/4.0/IKeymasterDevice.h>
+#include <android/hardware/keymaster/4.1/IKeymasterDevice.h>
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -35,11 +37,13 @@ static int Error(const ndk::ScopedAStatus& status) {
 }
 static int Negotiate(const Config& c) {
   namespace ss = aidl::android::hardware::security::sharedsecret;
+  namespace legacy = android::hardware::keymaster::V4_0;
   // Another negotiator could have additional participants. Never replace its live agreement.
   ndk::SpAIBinder running(
       AServiceManager_checkService("android.system.keystore2.IKeystoreService/default"));
   if (running.get()) return RC_SERVICES_UNAVAILABLE;
   std::vector<std::shared_ptr<ss::ISharedSecret>> devices;
+  std::vector<android::sp<legacy::IKeymasterDevice>> old_devices;
   std::vector<ss::SharedSecretParameters> parameters;
   for (const auto& name : c.sharedsecret_services) {
     auto d = Lookup<ss::ISharedSecret>(name);
@@ -50,6 +54,38 @@ static int Negotiate(const Config& c) {
     devices.push_back(d);
     parameters.push_back(std::move(p));
   }
+  for (const auto& name : c.sharedsecret_hidl_instances) {
+    android::sp<legacy::IKeymasterDevice> device;
+    const auto instance = name.substr(4);
+    if (name.starts_with("4.1/"))
+      device = android::hardware::keymaster::V4_1::IKeymasterDevice::tryGetService(instance);
+    else
+      device = legacy::IKeymasterDevice::tryGetService(instance);
+    if (!device) return RC_SERVICES_UNAVAILABLE;
+    bool hardware_ok = false;
+    auto hardware = device->getHardwareInfo([&](legacy::SecurityLevel level,
+                                                const android::hardware::hidl_string&,
+                                                const android::hardware::hidl_string&) {
+      hardware_ok = level == (instance == "strongbox" ? legacy::SecurityLevel::STRONGBOX
+                                                      : legacy::SecurityLevel::TRUSTED_ENVIRONMENT);
+    });
+    if (!hardware.isOk() || !hardware_ok) return RC_SERVICES_UNAVAILABLE;
+    ss::SharedSecretParameters p;
+    bool ok = false;
+    auto status = device->getHmacSharingParameters(
+        [&](legacy::ErrorCode error, const legacy::HmacSharingParameters& value) {
+          if (error != legacy::ErrorCode::OK || (value.seed.size() != 0 && value.seed.size() != 32))
+            return;
+          p.seed.assign(value.seed.begin(), value.seed.end());
+          p.nonce.assign(value.nonce.begin(), value.nonce.end());
+          ok = p.nonce.size() == 32;
+        });
+    if (!status.isOk() || !ok) return RC_SERVICES_UNAVAILABLE;
+    old_devices.push_back(device);
+    parameters.push_back(std::move(p));
+  }
+  // Match keystore2: retain every participant (including equal parameters),
+  // sort the combined list once, then require every checksum to agree.
   std::sort(parameters.begin(), parameters.end(), [](const auto& a, const auto& b) {
     return a.seed != b.seed ? a.seed < b.seed : a.nonce < b.nonce;
   });
@@ -62,6 +98,24 @@ static int Negotiate(const Config& c) {
       reference.assign(check.begin(), check.end());
     else if (CRYPTO_memcmp(reference.data(), check.data(), 32) != 0)
       return RC_SERVICES_UNAVAILABLE;
+  }
+  android::hardware::hidl_vec<legacy::HmacSharingParameters> old_parameters;
+  old_parameters.resize(parameters.size());
+  for (size_t i = 0; i < parameters.size(); ++i) {
+    old_parameters[i].seed.resize(parameters[i].seed.size());
+    std::copy(parameters[i].seed.begin(), parameters[i].seed.end(), old_parameters[i].seed.begin());
+    std::copy(parameters[i].nonce.begin(), parameters[i].nonce.end(),
+              old_parameters[i].nonce.begin());
+  }
+  for (const auto& device : old_devices) {
+    bool ok = false;
+    auto status = device->computeSharedHmac(
+        old_parameters,
+        [&](legacy::ErrorCode error, const android::hardware::hidl_vec<uint8_t>& check) {
+          ok = error == legacy::ErrorCode::OK && check.size() == 32 && reference.size() == 32 &&
+               CRYPTO_memcmp(reference.data(), check.data(), 32) == 0;
+        });
+    if (!status.isOk() || !ok) return RC_SERVICES_UNAVAILABLE;
   }
   return RC_OK;
 }
