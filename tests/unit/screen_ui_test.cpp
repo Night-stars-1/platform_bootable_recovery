@@ -44,15 +44,19 @@ static const std::vector<std::string> ITEMS{ "item1", "item2", "item3", "item4",
 // Synthetic cells only; these fixtures never read a user's credential or a HAL.
 class TestPattern : public recovery_ui::PatternInput {
  public:
+  explicit TestPattern(unsigned grid = 3) : grid_(grid) {}
+  unsigned GridSize() const override { return grid_; }
   size_t Size() const override { return cells.size(); }
   uint8_t Cell(size_t index) const override { return cells[index]; }
   bool Append(uint8_t cell) override {
-    if (cells.size() == 9) return false;
+    if (cells.size() == grid_ * grid_) return false;
     cells.push_back(cell);
     return true;
   }
   void Clear() override { cells.clear(); }
   std::vector<uint8_t> cells;
+ private:
+  unsigned grid_;
 };
 
 TEST(PatternInputTest, InsertsOnlyUnvisitedMidpointsAndRejectsDuplicates) {
@@ -100,28 +104,64 @@ TEST(PatternInputTest, ControlsRemainOutsideGridOnPortraitAndLandscape) {
     SetScaleBasis(width, height);
     Metrics m(width);
     int top = Dp(width, 180), bottom = height - Dp(width, 24);
-    auto layout = PatternBounds(m, top, bottom);
-    for (const auto& b : {layout.grid, layout.unlock, layout.clear, layout.cancel}) {
-      EXPECT_GT(b.w, 0);
-      EXPECT_GT(b.h, 0);
-      EXPECT_GE(b.x, 0);
-      EXPECT_GE(b.y, top);
-      EXPECT_LE(b.x + b.w, width);
-      EXPECT_LE(b.y + b.h, bottom);
+    for (unsigned n = 3; n <= 6; ++n) {
+      auto layout = PatternBounds(m, top, bottom, n);
+      for (const auto& b : {layout.grid, layout.unlock, layout.clear, layout.cancel}) {
+        EXPECT_GT(b.w, 0);
+        EXPECT_GT(b.h, 0);
+        EXPECT_GE(b.x, 0);
+        EXPECT_GE(b.y, top);
+        EXPECT_LE(b.x + b.w, width);
+        EXPECT_LE(b.y + b.h, bottom);
+      }
+      for (int cell = 0; cell < layout.CellCount(); ++cell) {
+        auto [x, y] = layout.Dot(cell);
+        EXPECT_EQ(layout.HitDot(x, y), cell);
+        EXPECT_EQ(layout.HitAction(x, y), -2);  // Empty space must not mean Back.
+      }
+      for (const auto& b : {layout.unlock, layout.clear, layout.cancel}) {
+        EXPECT_TRUE(b.x >= layout.grid.x + layout.grid.w ||
+                    b.y >= layout.grid.y + layout.grid.h);
+      }
+      EXPECT_EQ(layout.HitAction(layout.unlock.x + 1, layout.unlock.y + 1), layout.UnlockAction());
+      EXPECT_EQ(layout.HitAction(layout.clear.x + 1, layout.clear.y + 1), layout.ClearAction());
+      EXPECT_EQ(layout.HitAction(layout.cancel.x + 1, layout.cancel.y + 1), layout.CancelAction());
     }
-    for (int cell = 0; cell < 9; ++cell) {
-      auto [x, y] = layout.Dot(cell);
-      EXPECT_EQ(layout.HitDot(x, y), cell);
-      EXPECT_EQ(layout.HitAction(x, y), -2);  // Empty space must not mean Back.
-    }
-    for (const auto& b : {layout.unlock, layout.clear, layout.cancel}) {
-      EXPECT_TRUE(b.x >= layout.grid.x + layout.grid.w ||
-                  b.y >= layout.grid.y + layout.grid.h);
-    }
-    EXPECT_EQ(layout.HitAction(layout.unlock.x + 1, layout.unlock.y + 1), 9);
-    EXPECT_EQ(layout.HitAction(layout.clear.x + 1, layout.clear.y + 1), 10);
-    EXPECT_EQ(layout.HitAction(layout.cancel.x + 1, layout.cancel.y + 1), 11);
   }
+  SetScaleBasis(0, 0);
+}
+
+TEST(PatternInputTest, LargerGridsFillAllStraightGapsInOrder) {
+  using namespace recovery_m3e;
+  SetScaleBasis(360, 800);
+  for (unsigned n = 3; n <= 6; ++n) {
+    TestPattern input(n);
+    auto layout = PatternBounds(Metrics(360), 180, 776, n);
+    auto [x0, y0] = layout.Dot(0);
+    auto [xl, yl] = layout.Dot(n * n - 1);
+    ASSERT_TRUE(input.Select(0));
+    TracePattern(input, layout, x0, y0, xl, yl);
+    std::vector<uint8_t> diagonal;
+    for (unsigned i = 0; i < n; ++i) diagonal.push_back(i * (n + 1));
+    EXPECT_EQ(input.cells, diagonal);
+    input.Clear();
+    input.Select(0);
+    input.Select(n - 1);
+    std::vector<uint8_t> border;
+    for (unsigned i = 0; i < n; ++i) border.push_back(i);
+    EXPECT_EQ(input.cells, border);
+    input.Select(n * n - 1);
+    for (unsigned i = 1; i < n; ++i) border.push_back(i * n + n - 1);
+    EXPECT_EQ(input.cells, border);
+    EXPECT_FALSE(input.Select(n * n));
+    EXPECT_FALSE(input.Select(n - 1));
+    input.Clear();
+    input.Select(0);
+    input.Select(n + 2);  // A non-axis/non-diagonal jump must not fill a gap.
+    EXPECT_EQ(input.cells, (std::vector<uint8_t>{0, static_cast<uint8_t>(n + 2)}));
+  }
+  TestPattern invalid(7);
+  EXPECT_FALSE(invalid.Select(0));
   SetScaleBasis(0, 0);
 }
 
