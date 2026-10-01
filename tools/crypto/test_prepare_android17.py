@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import tempfile
+import shutil
 import unittest
 import prepare_android17 as prepare
 
@@ -29,6 +30,8 @@ class PreparationTests(unittest.TestCase):
         self.analyzer = self.root / 'system/tools/aidl/Android.bp'
         self.analyzer.parent.mkdir(parents=True)
         self.analyzer.write_text('// Unrelated compiler declarations stay intact\n' + prepare.ANALYZER_BLOCK + '\n')
+        fixtures = Path(__file__).parent / 'tests/fixtures/sepolicy'
+        shutil.copytree(fixtures, self.root / 'system/sepolicy')
 
     def tearDown(self):
         self.temp.cleanup()
@@ -36,14 +39,14 @@ class PreparationTests(unittest.TestCase):
     def test_preview_is_read_only_and_only_dependency_projects_change(self):
         originals = {p: p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
         changes = prepare.plan(self.root, self.review)
-        self.assertEqual(len(changes), 7)
+        self.assertEqual(len(changes), 10)
         for path in changes:
-            self.assertTrue(path.startswith(('hardware/interfaces/', 'external/sqlite/', 'system/tools/aidl/')))
+            self.assertTrue(path.startswith(('hardware/interfaces/', 'external/sqlite/', 'system/tools/aidl/', 'system/sepolicy/')))
         self.assertEqual(originals, {p: p.read_bytes() for p in originals})
 
     def test_applied_plan_is_idempotent(self):
         for path, (_, after) in prepare.plan(self.root, self.review).items():
-            (self.root / path).write_text(after)
+            (self.root / path).write_text(after, newline='\n')
         self.assertEqual(prepare.plan(self.root, self.review), {})
 
     def test_unknown_platform_is_refused_before_any_changes(self):

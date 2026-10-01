@@ -5,6 +5,7 @@
 import argparse
 import difflib
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -106,6 +107,14 @@ def prepare_analyzer(source):
     return add_recovery_variant(source, name, 'cc_library_static')
 
 
+def policy_plan(source_root):
+    path = Path(__file__).with_name('policy_patch.py')
+    spec = importlib.util.spec_from_file_location('recovery_crypto_policy_patch', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.plan(source_root)
+
+
 def plan(source_root, review_path=None):
     review_path = review_path or ROOT / 'crypto/android17/source-review.json'
     review = json.loads(review_path.read_text(encoding='utf-8'))
@@ -134,6 +143,7 @@ def plan(source_root, review_path=None):
         if not all(token in before for token in ('name: "sqlite-minimal-defaults"', 'name: "release_package_libsqlite3_library_defaults"')):
             raise ValueError('Unknown SQLite defaults')
         changes[relative] = (before, before + SQLITE_BLOCK)
+    changes.update(policy_plan(source_root))
     return changes
 
 
@@ -149,7 +159,7 @@ def main():
     if args.check:
         if changes:
             raise ValueError('Recovery variants not prepared: ' + ', '.join(changes))
-        print('Reviewed platform formats and Recovery dependency declarations verified. No compilation or device validation.')
+        print('Reviewed platform formats, Recovery dependencies and explicit policy patch verified. No compilation or device validation.')
         return
     if not args.apply:
         for path, (before, after) in changes.items():

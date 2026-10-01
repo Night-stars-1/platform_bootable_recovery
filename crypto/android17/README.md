@@ -157,6 +157,33 @@ those projects. The device adaptation belongs to the device/vendor projects.
 editing either the device adaptation or those other projects. It does not itself
 run this helper or sync the other projects.
 
+The helper also checks/applies the explicit reviewed
+`tools/crypto/patches/android17-recovery-key-access.patch` to `system/sepolicy`.
+It uses Git against isolated copies to verify either the original or fully
+patched state, preserves compatible unrelated edits, and refuses conflicts or
+partial application. No regular expression generates or rewrites policy rules.
+Review inputs and patch hash are in the sibling JSON manifest.
+
+This patch alone grants no access. An adapted device must explicitly set the
+following in its **BoardConfig**, in the same conditional as its crypto policy:
+
+```make
+BOARD_SEPOLICY_M4DEFS += recovery_crypto_android17=true
+```
+
+The exception expands only when both this flag and `target_recovery` are true.
+Normal Android and non-opt-in Recovery retain the original key-isolation
+semantics. Opt-in Recovery can read existing regular-file keys/databases and
+add/query kernel fscrypt keys. Writes, execution, non-regular key-file access,
+setting encryption policies and removing encryption keys remain forbidden.
+Read-only access trusts Recovery code with encrypted key material; the patch
+does not isolate the UI and worker into separate SELinux domains.
+
+Keep this explicit patch in a platform SELinux fork for a maintained release,
+or reapply after syncing `system/sepolicy`; device-specific permissions and the
+flag stay in the device tree. Syncing `bootable/recovery` does not change either
+project. The helper never compiles or flashes anything.
+
 ## Deliberate limits
 
 - Requires an actual AIDL KeyMint implementation. HIDL-only Keymaster devices
@@ -194,7 +221,12 @@ The host deployment tests can be run without compiling:
 
 ```bash
 python3 bootable/recovery/tools/crypto/test_prepare_android17.py
+python3 bootable/recovery/tools/crypto/test_policy_patch.py
 ```
+
+The policy tests apply the patch only to temporary public fixtures and use m4
+to verify all four opt-in/Recovery combinations, unchanged normal isolation and
+retained removal/write guards. They do not compile a SELinux binary policy.
 
 The maintainer should compile/run `recovery_crypto_android17_test` in the normal
 Android native-test environment, which tests
