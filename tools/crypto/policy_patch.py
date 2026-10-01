@@ -11,15 +11,19 @@ import tempfile
 
 PATCH_DIR = Path(__file__).resolve().parent / 'patches'
 FILES = ('private/vold.te', 'private/keystore.te', 'public/te_macros')
+REVIEWS = ('android17-recovery-key-access', 'android17-uwu-recovery-key-access')
 
 
 def plan(source_root):
-    manifest = json.loads((PATCH_DIR / 'android17-recovery-key-access.json').read_text())
-    patch = PATCH_DIR / 'android17-recovery-key-access.patch'
-    if (manifest.get('schema') != 1 or manifest.get('patch') != patch.name or
-            set(manifest.get('files', {})) != set(FILES) or
-            hashlib.sha256(patch.read_bytes()).hexdigest() != manifest.get('sha256')):
-        raise ValueError('Recovery crypto policy patch/review differs; review before deployment')
+    patches = []
+    for review in REVIEWS:
+        manifest = json.loads((PATCH_DIR / (review + '.json')).read_text())
+        patch = PATCH_DIR / (review + '.patch')
+        if (manifest.get('schema') != 1 or manifest.get('patch') != patch.name or
+                set(manifest.get('files', {})) != set(FILES) or
+                hashlib.sha256(patch.read_bytes()).hexdigest() != manifest.get('sha256')):
+            raise ValueError('Recovery crypto policy patch/review differs; review before deployment: ' + review)
+        patches.append(patch)
     root = source_root.resolve() / 'system/sepolicy'
     originals = {}
     for relative in FILES:
@@ -39,7 +43,7 @@ def plan(source_root):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
 
-        def git_apply(*options):
+        def git_apply(patch, *options):
             try:
                 return subprocess.run(['git', '-c', 'core.autocrlf=false', 'apply',
                                        '--whitespace=error-all', *options, str(patch)],
@@ -47,14 +51,24 @@ def plan(source_root):
             except subprocess.TimeoutExpired as error:
                 raise ValueError('Recovery crypto policy patch check timed out; no source changed') from error
 
-        forward = git_apply('--check')
-        if forward.returncode:
-            reverse = git_apply('--reverse', '--check')
-            if reverse.returncode:
-                raise ValueError('Recovery crypto policy patch conflicts; review source before deployment: ' +
-                                 forward.stderr.decode(errors='replace')[:1000])
+        # Only complete reviewed variants may match. Do not combine successful
+        # hunks from different patches or invent exceptions for unknown rules.
+        matches, errors = [], []
+        for patch in patches:
+            forward = git_apply(patch, '--check')
+            reverse = git_apply(patch, '--reverse', '--check')
+            if not forward.returncode:
+                matches.append((patch, False))
+            if not reverse.returncode:
+                matches.append((patch, True))
+            errors.append(patch.name + ': ' + forward.stderr.decode(errors='replace')[:500])
+        if len(matches) != 1:
+            raise ValueError('Recovery crypto policy patch conflicts; review source before deployment: ' +
+                             ('ambiguous reviewed variants' if matches else '\n'.join(errors)))
+        patch, already_applied = matches[0]
+        if already_applied:
             return {}
-        applied = git_apply()
+        applied = git_apply(patch)
         if applied.returncode:
             raise ValueError('Cannot stage Recovery crypto policy patch: ' +
                              applied.stderr.decode(errors='replace')[:1000])
