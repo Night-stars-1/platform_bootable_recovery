@@ -56,10 +56,11 @@ cc_library_shared {
 
 // Maintainers compile/run this explicitly. Merely syncing Recovery runs no tests
 // and this target never calls the exported backend or accesses real user keys.
+// Use the normal Android test image: these synthetic fixtures do not require
+// Recovery, and the platform gtest libraries do not expose Recovery variants.
 cc_test {
     name: "recovery_crypto_android17_test",
     defaults: ["recovery_crypto_android17_defaults"],
-    recovery: true,
     srcs: ["tests/native_test.cpp"],
     local_include_dirs: ["."],
 }
