@@ -16,12 +16,19 @@ bool ReadConfig(Config* c) {
   std::istringstream input(text);
   std::string line;
   std::map<std::string, std::string> fields;
-  const std::set<std::string> allowed = {
-    "profile_version",     "platform_sdk",          "fstab",
-    "keymint_service",     "security_level",        "gatekeeper_transport",
-    "gatekeeper_instance", "weaver_transport",      "weaver_instance",
-    "secureclock_service", "sharedsecret_services", "storage_binding"
-  };
+  const std::set<std::string> allowed = { "profile_version",
+                                          "platform_sdk",
+                                          "fstab",
+                                          "keymint_service",
+                                          "security_level",
+                                          "gatekeeper_transport",
+                                          "gatekeeper_instance",
+                                          "weaver_transport",
+                                          "weaver_instance",
+                                          "secureclock_service",
+                                          "sharedsecret_services",
+                                          "storage_binding",
+                                          "sharedsecret_hidl_instances" };
   while (std::getline(input, line)) {
     if (!line.empty() && line.back() == '\r') line.pop_back();
     if (line.empty() || line[0] == '#') continue;
@@ -70,6 +77,18 @@ bool ReadConfig(Config* c) {
     for (const auto& previous : c->sharedsecret_services)
       if (previous == service) return false;
     c->sharedsecret_services.push_back(service);
+  }
+  std::istringstream legacy(fields["sharedsecret_hidl_instances"]);
+  std::set<std::string> instances;
+  while (std::getline(legacy, service, ',')) {
+    if (service != "4.0/default" && service != "4.1/default" && service != "4.0/strongbox" &&
+        service != "4.1/strongbox")
+      return false;
+    auto instance = service.substr(4);
+    if (!instances.insert(instance).second ||
+        c->sharedsecret_services.size() + c->sharedsecret_hidl_instances.size() >= 4)
+      return false;
+    c->sharedsecret_hidl_instances.push_back(service);
   }
   return !c->sharedsecret_services.empty();
 }

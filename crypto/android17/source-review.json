@@ -15,6 +15,8 @@
     "system/vold/FsCrypt.cpp": "6d99279ad6d08dc86d6055b75227b98df26185ffec4b27aa3381478f127bfa9b",
     "system/vold/MetadataCrypt.cpp": "93e39279b5539ad0ae781dc8a200ea367a55d3755c39e7185326af033ad6efc0",
     "system/security/keystore2/src/database.rs": "c8593cb3582391755731a57fa2b917dcc3871c1991e233578c2eb8d388d7f257",
-    "system/security/keystore2/src/security_level.rs": "0ce4ead3ab515e73d2510261de1c85099d57745040783b9ebc40ed0067bca0b2"
+    "system/security/keystore2/src/security_level.rs": "0ce4ead3ab515e73d2510261de1c85099d57745040783b9ebc40ed0067bca0b2",
+    "system/security/keystore2/src/shared_secret_negotiation.rs": "002e8e2e5224eba1e43444eef514f1a7179f028c25706825434e2971b8bb5b82",
+    "system/libhidl/transport/ServiceManagement.cpp": "cc620db3f2e2fae3b99be62de8bb36ae30c5c20621e54c3ffeb70bfdc75f754a"
   }
 }
