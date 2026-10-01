@@ -41,6 +41,19 @@ void ShowError(Device* device, const Result& result) {
 bool ReadCredential(Device* device, uint32_t type, Credential* credential) {
   credential->Clear();
   if (!credential->secure()) { ShowError(device, {Status::IoError}); return false; }
+  if (type == RC_CREDENTIAL_PATTERN) {
+    class LockedPattern final : public recovery_ui::PatternInput {
+     public:
+      explicit LockedPattern(Credential& credential) : credential_(credential) {}
+      size_t Size() const override { return credential_.size(); }
+      uint8_t Cell(size_t index) const override { return credential_.data()[index]; }
+      bool Append(uint8_t cell) override { return credential_.Append(cell); }
+      void Clear() override { credential_.Clear(); }
+     private:
+      Credential& credential_;
+    } pattern(*credential);
+    return device->GetUI()->ReadPattern(pattern);
+  }
   std::string prompt;
   std::vector<std::string> items{"Unlock storage", "Delete last character", "Clear input", "Cancel"};
   std::vector<uint8_t> characters;
@@ -58,10 +71,6 @@ bool ReadCredential(Device* device, uint32_t type, Credential* credential) {
         characters.push_back(c);
       }
       break;
-    case RC_CREDENTIAL_PATTERN:
-      prompt = "Select pattern dots in order (1-9, top-left to bottom-right)";
-      for (uint8_t c = 0; c < 9; ++c) { items.push_back(std::to_string(c + 1)); characters.push_back(c); }
-      break;
     default: return false;
   }
   for (;;) {
@@ -70,26 +79,12 @@ bool ReadCredential(Device* device, uint32_t type, Credential* credential) {
         "Entered characters: " + std::to_string(credential->size())}, items);
     if (picked >= items.size() || picked == 3) { credential->Clear(); return false; }
     if (picked == 0) {
-      if (credential->size() && (type != RC_CREDENTIAL_PATTERN || credential->size() >= 4)) return true;
+      if (credential->size()) return true;
       continue;
     }
     if (picked == 1) { credential->EraseLast(); continue; }
     if (picked == 2) { credential->Clear(); continue; }
     const uint8_t character = characters[picked - 4];
-    if (type == RC_CREDENTIAL_PATTERN) {
-      if (credential->Contains(character)) continue;
-      if (credential->size()) {
-        const auto previous = credential->data()[credential->size() - 1];
-        const int x1 = previous % 3, y1 = previous / 3;
-        const int x2 = character % 3, y2 = character / 3;
-        // Android's skipped midpoint rule, before serializing cells 0..8.
-        if ((abs(x1 - x2) == 2 || abs(y1 - y2) == 2) &&
-            (x1 + x2) % 2 == 0 && (y1 + y2) % 2 == 0) {
-          const uint8_t middle = ((y1 + y2) / 2) * 3 + (x1 + x2) / 2;
-          if (!credential->Contains(middle)) credential->Append(middle);
-        }
-      }
-    }
     credential->Append(character);
   }
 }
