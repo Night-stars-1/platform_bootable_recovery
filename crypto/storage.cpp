@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -57,9 +58,13 @@ bool VerifyUserStorage(uint32_t user_id) {
   }
   if (ioctl(fd.get(), FS_IOC_GET_ENCRYPTION_KEY_STATUS, &key) < 0 ||
       key.status != FSCRYPT_KEY_STATUS_PRESENT) return false;
-  DIR* directory = fdopendir(fd.get());
-  if (!directory) return false;
-  fd.release();
+  // fdopendir owns the descriptor on success. Restore cleanup on failure.
+  const int directory_fd = fd.release();
+  DIR* directory = fdopendir(directory_fd);
+  if (!directory) {
+    close(directory_fd);
+    return false;
+  }
   errno = 0;
   // Access, rather than nonempty output, is the success criterion. An empty
   // readable directory is valid. No filenames or file contents enter logs.
