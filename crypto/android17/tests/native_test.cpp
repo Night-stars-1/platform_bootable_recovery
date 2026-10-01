@@ -10,6 +10,25 @@
 #include "synthetic_password.h"
 #include "vectors.h"
 using namespace recovery_crypto::android17;
+TEST(Android17RecoveryCrypto, GatekeeperBoundsAcceptLegacyVersionZeroWithoutAuthentication) {
+  // Synthetic handle with the public packed password_handle_t size; no SID,
+  // salt/signature from a phone and no HAL lookup or credential attempt.
+  Bytes handle(58, 0);
+  EXPECT_TRUE(ValidGatekeeperInput(100000, handle));
+  for (uint8_t version : {0, 1, 2, 3}) {
+    handle[0] = version;
+    EXPECT_TRUE(ValidGatekeeperInput(100000, handle));
+  }
+  handle[0] = 4;
+  EXPECT_FALSE(ValidGatekeeperInput(100000, handle));
+  handle[0] = 0;
+  EXPECT_FALSE(ValidGatekeeperInput(UINT32_MAX, handle));
+  EXPECT_FALSE(ValidGatekeeperInput(100000, {}));
+  handle.resize(8);
+  EXPECT_FALSE(ValidGatekeeperInput(100000, handle));
+  handle.resize(4097);
+  EXPECT_FALSE(ValidGatekeeperInput(100000, handle));
+}
 TEST(Android17RecoveryCrypto, DiagnosticFormatIsBoundedAndContainsOnlyTypedCodes) {
   EXPECT_EQ(FormatDiagnostic(RC_IO_ERROR, Checkpoint::KeymintBegin, CodeSource::Hal, -26),
             "[recovery_crypto] point=keymint_begin result=7 source=hal code=-26\n");

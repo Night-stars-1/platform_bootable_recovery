@@ -259,7 +259,7 @@ so an earlier candidate failure does not imply final failure if `ce_load` succee
 | --- | --- |
 | `protector_key` | Reading the current SP protector key/security level from keystore |
 | `credential_format`, `stretch` | Input encoding and stored scrypt parameters |
-| `gatekeeper_verify`, `gatekeeper_token`, `weaver_read` | Hardware verification, throttling and token format |
+| `gatekeeper_input`, `gatekeeper_verify`, `gatekeeper_token`, `weaver_read` | Pre-call bounds, hardware verification, throttling and token format |
 | `keymint_begin`, `keymint_finish`, `secureclock` | KeyMint key use, authenticated decrypt and timestamp generation |
 | `sp_discardable`, `sp_software_decrypt`, `sp_format`, `sp_handle`, `sp_derive` | SP state, unwrap, main-user verification and FBE subkey derivation |
 | `ce_key_directories`, `stored_key_read`, `stored_key_decrypt` | Existing CE key candidates and their software wrapping |
@@ -275,6 +275,13 @@ the numeric code's namespace; `source=none code=0` means there is no raw code,
 source=hal code=...` locates a KeyMint rejection; it is not by itself evidence of
 a wrong pattern. No diagnostic automatically retries, enrolls, upgrades or
 rewrites keys.
+
+Gatekeeper's existing handle may have legacy version 0. The reviewed
+[`GateKeeper::Verify`](https://android.googlesource.com/platform/system/gatekeeper/+/5b5e75b5bda9fccbc3132e9624cb25286babdaac/gatekeeper.cpp)
+rejects versions above its supported maximum, not version 0. The backend passes
+that legacy handle to the configured HAL without reenrollment, retains its
+size/upper-version bounds and validates the resulting hardware auth token and
+SID as before. A valid input shape is not proof of successful authentication.
 
 The pure formatter fixtures in `tests/native_test.cpp` check code/namespace
 formatting, numeric bounds and invalid inputs. They do not write a log or call a

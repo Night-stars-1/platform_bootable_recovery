@@ -7,7 +7,7 @@ namespace recovery_crypto::android17 {
 // No free-form strings, user IDs, paths, credentials, lengths, tokens or blobs.
 enum class Checkpoint {
   Services, Metadata, DeKeys, CredentialType, SpUnlock, CeLoad,
-  CredentialFormat, ProtectorKey, Stretch, GatekeeperVerify, GatekeeperToken,
+  CredentialFormat, ProtectorKey, Stretch, GatekeeperInput, GatekeeperVerify, GatekeeperToken,
   WeaverRead, SpDiscardable, SpSoftwareDecrypt, SpFormat, SpHandle, SpDerive,
   KeymintInput, KeymintBegin, KeymintFinish, KeymintOutput, SecureClock,
   StorageExport, StoredKeyRead, StoredKeyDecrypt, FscryptPolicy, FscryptKeyShape,

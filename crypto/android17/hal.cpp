@@ -235,11 +235,17 @@ static int Retry(uint64_t milliseconds, uint32_t* retry) {
   *retry = static_cast<uint32_t>(std::min<uint64_t>((milliseconds + 999) / 1000, UINT32_MAX));
   return RC_RETRY;
 }
+bool ValidGatekeeperInput(uint32_t user, View handle) {
+  // AOSP GateKeeper::Verify accepts legacy version 0; rejecting it here stops
+  // before the hardware can authenticate an existing enrollment. Keep the SID
+  // read's size guard and existing upper version bound. This does not enroll or
+  // upgrade a handle, and the HAL must still verify its signature/password.
+  return user <= INT32_MAX && handle.size() >= 9 && handle.size() <= 4096 && handle[0] <= 3;
+}
 int Hal::VerifyGatekeeper(uint32_t user, View handle, View password, Authentication* auth,
                           uint32_t* retry) {
-  if (user > INT32_MAX || handle.size() < 9 || handle.size() > 4096 || handle[0] < 1 ||
-      handle[0] > 3)
-    return Diagnostic(RC_IO_ERROR, Checkpoint::GatekeeperVerify);
+  if (!ValidGatekeeperInput(user, handle))
+    return Diagnostic(RC_IO_ERROR, Checkpoint::GatekeeperInput);
   BinderBytes h(handle), p(password);
   if (gatekeeper_) {
     gk::GatekeeperVerifyResponse response;
