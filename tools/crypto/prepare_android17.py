@@ -16,6 +16,22 @@ INTERFACES = {
     'gatekeeper': 'android.hardware.gatekeeper',
     'weaver': 'android.hardware.weaver',
 }
+# AIDL propagates recovery_available to its generated C++ analyzers too.
+# Review the complete runtime declaration, not the unrelated compiler modules.
+ANALYZER_BLOCK = '''cc_library_static {
+    name: "aidl-analyzer-main",
+    host_supported: true,
+    vendor_available: true,
+    shared_libs: [
+        "libbase",
+        "libbinder",
+    ],
+    srcs: [
+        "analyzer/analyzerMain.cpp",
+        "analyzer/Analyzer.cpp",
+    ],
+    export_include_dirs: ["analyzer/include"],
+}'''
 SQLITE_BLOCK = '''\n// BEGIN recovery-crypto Android 17 SQLite (unlock-only backend)
 cc_library_static {
     name: "librecovery_crypto_sqlite",
@@ -29,11 +45,11 @@ cc_library_static {
 '''
 
 
-def add_recovery_variant(source, name):
-    pattern = r'(aidl_interface\s*\{\s*name:\s*"' + re.escape(name) + r'",)'
+def module_span(source, name, module_type):
+    pattern = r'(' + re.escape(module_type) + r'\s*\{\s*name:\s*"' + re.escape(name) + r'",)'
     matches = list(re.finditer(pattern, source))
     if len(matches) != 1:
-        raise ValueError(f'Unknown interface layout: {name}')
+        raise ValueError(f'Unknown module layout: {name}')
     start = matches[0].end()
     # Interface may contain nested backend/version blocks; find the entire balanced block.
     begin = source.rfind('{', 0, start)
@@ -60,7 +76,12 @@ def add_recovery_variant(source, name):
             depth -= 1
         end += 1
     if depth:
-        raise ValueError('Unbalanced interface')
+        raise ValueError('Unbalanced module')
+    return begin, start, end
+
+
+def add_recovery_variant(source, name, module_type='aidl_interface'):
+    begin, start, end = module_span(source, name, module_type)
     body = source[begin:end]
     existing = re.findall(r'\brecovery_available:\s*(true|false)', body)
     if existing:
@@ -68,6 +89,19 @@ def add_recovery_variant(source, name):
             raise ValueError(f'Refusing to override recovery_available in {name}')
         return source
     return source[:start] + '\n    recovery_available: true,' + source[start:]
+
+
+def prepare_analyzer(source):
+    name = 'aidl-analyzer-main'
+    begin, _, end = module_span(source, name, 'cc_library_static')
+    body = source[begin:end]
+    # The span starts at the opening brace; accept only the reviewed module,
+    # with whitespace differences and our additive Recovery declaration.
+    original = re.sub(r'\brecovery_available:\s*true\s*,', '', body)
+    expected = ANALYZER_BLOCK[ANALYZER_BLOCK.index('{'):]
+    if re.sub(r'\s+', '', original) != re.sub(r'\s+', '', expected):
+        raise ValueError('AIDL analyzer runtime needs review before adding a Recovery variant')
+    return add_recovery_variant(source, name, 'cc_library_static')
 
 
 def plan(source_root, review_path=None):
@@ -84,6 +118,11 @@ def plan(source_root, review_path=None):
         after = add_recovery_variant(before, name)
         if after != before:
             changes[relative] = (before, after)
+    relative = 'system/tools/aidl/Android.bp'
+    before = (source_root / relative).read_text(encoding='utf-8')
+    after = prepare_analyzer(before)
+    if after != before:
+        changes[relative] = (before, after)
     relative = 'external/sqlite/dist/Android.bp'
     before = (source_root / relative).read_text(encoding='utf-8')
     if 'name: "librecovery_crypto_sqlite"' in before:

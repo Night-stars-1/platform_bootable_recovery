@@ -124,7 +124,7 @@ existing health/fastboot declarations or the normal Android vendor manifest.
 
 ## Recovery dependency preparation
 
-Some AIDL projects and SQLite do not provide Recovery variants in this platform.
+Some AIDL projects, their analyzer runtime and SQLite do not provide Recovery variants in this platform.
 The helper adds only their build declarations, leaving normal-system code intact.
 It verifies the reviewed source hashes before making any change, backs up original
 files outside the source tree and refuses conflicting or unknown declarations.
@@ -142,7 +142,15 @@ reads real user keys. The exact reviewed revisions and format-bearing source
 hashes are recorded in `source-review.json`. A platform update that changes these
 sources requires a new review before accepting its key/protector formats.
 
-The dependency changes belong to `hardware/interfaces` and `external/sqlite`.
+The helper also adds `recovery_available: true` to the reviewed
+`aidl-analyzer-main` static library in `system/tools/aidl/Android.bp`: AIDL
+propagates interface Recovery availability to generated C++ analyzers, whose
+static dependency needs the same image variant. This does not select an analyzer
+for installation in the Recovery image or change normal-system code. A changed
+analyzer runtime declaration is refused for review before any writes.
+
+The dependency changes belong to `hardware/interfaces`, `system/tools/aidl`
+and `external/sqlite`.
 Commit/manifest-track them in a release fork, or reapply the helper after syncing
 those projects. The device adaptation belongs to the device/vendor projects.
 `repo sync -c bootable/recovery` updates the generic backend and helper without
