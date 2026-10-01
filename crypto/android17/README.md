@@ -250,6 +250,19 @@ Recovery variants. It uses the same backend sources with normal Android
 dependencies; the production backend remains `recovery: true`. These fixture
 tests do not validate Recovery linking, HAL operation or device decryption.
 
+ScreenRecoveryUI now asks for patterns on a touchable 3-by-3 dot grid, with
+selected dots, connecting strokes and explicit Unlock/Clear/Cancel controls.
+Starting a new stroke on a dot clears the previous drawing; a pattern needs
+at least four dots and finger-up before explicit submission. Crossing an
+unvisited midpoint follows Android's rule. Volume keys navigate the same grid
+and controls; Power selects the highlighted target when touch is unavailable.
+Custom/stub UIs can decline the optional pattern API without affecting sideload.
+The UI views the caller's locked credential memory and neither logs nor copies
+the pattern into a text/menu string. Cancelling clears it and leaving the page
+redraws both framebuffer pages. Ordinary menus retain their swipe scrolling.
+Synthetic grid/midpoint/sparse-motion/layout fixtures are included in
+`tests/unit/screen_ui_test.cpp`; no test attempts real credential verification.
+
 For each enabled device, test empty LSKF, PIN, password, pattern, Weaver and
 Gatekeeper paths as applicable, wrong credentials, hardware throttle, missing
 services/keys, unsupported/upgrade-required blobs, failure followed by ordinary

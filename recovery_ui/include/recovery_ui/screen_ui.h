@@ -347,6 +347,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   void Print(const char* fmt, ...) override __printflike(2, 3);
   void PrintOnScreenOnly(const char* fmt, ...) override __printflike(2, 3);
   void ShowFile(const std::string& filename) override;
+  bool ReadPattern(recovery_ui::PatternInput& input) override;
 
   // menu display
   size_t ShowMenu(const std::vector<std::string>& headers, const std::vector<std::string>& items,
@@ -500,6 +501,13 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   std::vector<std::string> m3e_install_logs_;
   bool IsInstallPageLocked() const;
   void DrawInstallPageLocked();
+  void DrawPatternPageLocked();
+  Point TouchPoint(const Point& raw) const;
+  // Non-owning view into the caller's locked credential. Protected by updateMutex.
+  recovery_ui::PatternInput* pattern_input_ = nullptr;
+  bool pattern_dragging_ = false;
+  Point pattern_finger_;
+  int pattern_focus_ = -2;
   int DrawDashboard(int y, int width, int available, int selected, bool active) const override;
   int DrawMenuPrompt(int x, int y, const std::vector<std::string>& lines) const override;
   void DrawMenuCard(int y, int width, const std::string& label, bool selected, bool active) const override;

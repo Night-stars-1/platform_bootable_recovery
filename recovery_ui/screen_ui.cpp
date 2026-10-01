@@ -54,6 +54,7 @@
 #include "otautil/paths.h"
 #include "recovery_ui/device.h"
 #include "recovery_ui/ui.h"
+#include "recovery_ui/m3e_pattern.h"
 
 
 // M3E presentation uses minui only; installation code and confirmation flow stay upstream.
@@ -718,6 +719,124 @@ void ScreenRecoveryUI::SelectAndShowBackgroundText(const std::vector<std::string
   gr_flip();
 }
 
+void ScreenRecoveryUI::DrawPatternPageLocked() {
+  using namespace recovery_m3e;
+  Metrics m(ScreenWidth());
+  M3eCanvas canvas;
+  auto palette = Palette::ForMode(false);
+  int top = std::max(margin_height_, Dp(m.width, 24));
+  int y = DrawHeader(canvas, m, top, true, pattern_focus_ == -1, false,
+                     0, 0, {}, palette, "Unlock internal storage");
+  Label(canvas, m, m.inset, y, m.width - 2 * m.inset,
+        "Draw your lock-screen pattern", Font::Body, palette.secondary);
+  y += LineHeight(FontPixels(Font::Body, m.width)) + Dp(m.width, 6);
+  Label(canvas, m, m.inset, y, m.width - 2 * m.inset,
+        "Connect at least 4 dots, then tap Unlock", Font::Small, palette.secondary);
+  y += LineHeight(FontPixels(Font::Small, m.width)) + Dp(m.width, 20);
+  auto layout = PatternBounds(m, y, ScreenHeight() - std::max(margin_height_, Dp(m.width, 24)));
+  DrawPattern(canvas, m, layout, *pattern_input_, pattern_dragging_,
+              pattern_finger_.x(), pattern_finger_.y(), pattern_focus_, palette);
+}
+
+bool ScreenRecoveryUI::ReadPattern(recovery_ui::PatternInput& input) {
+  using namespace recovery_m3e;
+  if (IsKeyInterrupted()) { input.Clear(); return false; }
+  {
+    std::lock_guard<std::mutex> lock(updateMutex);
+    input.Clear();
+    pattern_input_ = &input;
+    pattern_dragging_ = false;
+    pattern_focus_ = -2;
+    gesture_input_ = true;
+    FlushKeys();
+    update_screen_locked();
+  }
+  int pressed_action = -2;
+  Point pressed_point;
+  bool accepted = false, done = false;
+  auto last_draw = std::chrono::steady_clock::now();
+  while (!done) {
+    auto event = WaitInputEvent();
+    std::lock_guard<std::mutex> lock(updateMutex);
+    if (event.type() == EventType::EXTRA) {
+      if (event.key() == static_cast<int>(KeyError::INTERRUPTED)) done = true;
+      continue;
+    }
+    Metrics m(ScreenWidth());
+    int top = std::max(margin_height_, Dp(m.width, 24));
+    int y = HeaderBottom(m, top, false) + LineHeight(FontPixels(Font::Body, m.width)) +
+            LineHeight(FontPixels(Font::Small, m.width)) + Dp(m.width, 26);
+    auto layout = PatternBounds(m, y, ScreenHeight() - std::max(margin_height_, Dp(m.width, 24)));
+    auto invoke = [&](int action) {
+      if (action == -1 || action == 11) done = true;
+      else if (action == 10) { input.Clear(); pattern_dragging_ = false; }
+      else if (action == 9 && !pattern_dragging_ && input.Size() >= 4) { accepted = done = true; }
+      else if (action >= 0 && action < 9) input.Select(action);
+    };
+    if (event.type() == EventType::KEY) {
+      if (event.key() == KEY_BACK || event.key() == KEY_ESC) done = true;
+      else if (event.key() == KEY_BACKSPACE || event.key() == KEY_DELETE) invoke(10);
+      else if (!pattern_dragging_ && (event.key() == KEY_UP || event.key() == KEY_VOLUMEUP)) {
+        pattern_focus_ = pattern_focus_ <= -1 ? 11 : pattern_focus_ - 1;
+      } else if (!pattern_dragging_ && (event.key() == KEY_DOWN || event.key() == KEY_VOLUMEDOWN)) {
+        pattern_focus_ = pattern_focus_ < -1 || pattern_focus_ == 11 ? -1 : pattern_focus_ + 1;
+      } else if (!pattern_dragging_ && (event.key() == KEY_POWER || event.key() == KEY_ENTER)) {
+        if (pattern_focus_ == -2) pattern_focus_ = 0;
+        else invoke(pattern_focus_);
+      }
+    } else if (event.type() == EventType::TOUCH_DOWN || event.type() == EventType::TOUCH_MOVE ||
+               event.type() == EventType::TOUCH_UP) {
+      auto point = TouchPoint(event.pos());
+      auto back = BackBounds(m, top);
+      int action = back.Contains(point.x(), point.y()) ? -1 : layout.HitAction(point.x(), point.y());
+      if (event.type() == EventType::TOUCH_DOWN) {
+        pressed_action = action;
+        pressed_point = point;
+        pattern_focus_ = -2;
+        int cell = layout.HitDot(point.x(), point.y());
+        pattern_dragging_ = cell >= 0;
+        if (pattern_dragging_) { input.Clear(); input.Select(cell); }
+        pattern_finger_ = point;
+      } else {
+        if (pattern_dragging_) {
+          TracePattern(input, layout, pattern_finger_.x(), pattern_finger_.y(), point.x(), point.y());
+          pattern_finger_ = point;
+          if (event.type() == EventType::TOUCH_UP) pattern_dragging_ = false;
+        } else {
+          int64_t dx = point.x() - pressed_point.x(), dy = point.y() - pressed_point.y();
+          int slop = Dp(m.width, 16);
+          if (dx * dx + dy * dy > int64_t(slop) * slop) pressed_action = -2;
+          if (event.type() == EventType::TOUCH_UP && pressed_action != -2 && action == pressed_action)
+            invoke(action);
+        }
+        if (event.type() == EventType::TOUCH_UP) pressed_action = -2;
+      }
+    }
+    // Consume every motion sample, but bound expensive text/full-page redraws.
+    auto time = std::chrono::steady_clock::now();
+    if (!done && (event.type() != EventType::TOUCH_MOVE ||
+                  time - last_draw >= std::chrono::milliseconds(33))) {
+      update_screen_locked();
+      last_draw = time;
+    }
+  }
+  {
+    std::lock_guard<std::mutex> lock(updateMutex);
+    gesture_input_ = false;
+    discard_touch_until_press_ = true;
+    FlushKeys();
+    pattern_input_ = nullptr;
+    pattern_dragging_ = false;
+    pattern_finger_ = {};
+    pattern_focus_ = -2;
+    if (!accepted) input.Clear();
+    // Clear the pattern from both framebuffer pages on exit.
+    update_screen_locked();
+    update_screen_locked();
+  }
+  return accepted;
+}
+
 void ScreenRecoveryUI::CheckBackgroundTextImages() {
   // Load a list of locales embedded in one of the resource files.
   std::vector<std::string> locales_entries = get_locales_in_png("installing_text");
@@ -875,6 +994,13 @@ std::vector<std::string> ScreenRecoveryUI::GetMenuHelpMessage() const {
 // Redraws everything on the screen. Does not flip pages. Should only be called with updateMutex
 // locked.
 void ScreenRecoveryUI::draw_screen_locked() {
+  if (pattern_input_) {
+    M3eSetColor(recovery_m3e::Palette::ForMode(false).background);
+    gr_clear();
+    DrawPatternPageLocked();
+    draw_battery_capacity_locked();
+    return;
+  }
   if (IsInstallPageLocked()) {
     gr_color(0, 0, 0, 255);
     gr_clear();
@@ -1624,11 +1750,11 @@ int ScreenRecoveryUI::SelectMenu(int sel) {
   return sel;
 }
 
-int ScreenRecoveryUI::SelectMenu(const Point& p) {
+Point ScreenRecoveryUI::TouchPoint(const Point& p) const {
   Point point;
 
-  const auto scaleX = static_cast<double>(p.x()) / ScreenWidth();
-  const auto scaleY = static_cast<double>(p.y()) / ScreenHeight();
+  const auto scaleX = static_cast<double>(p.x()) / gr_fb_width_real();
+  const auto scaleY = static_cast<double>(p.y()) / gr_fb_height_real();
 
   // Correct position for touch rotation
   switch (gr_touch_rotation()) {
@@ -1653,6 +1779,11 @@ int ScreenRecoveryUI::SelectMenu(const Point& p) {
   // Correct position for overscan
   point.x(point.x() - gr_overscan_offset_x());
   point.y(point.y() - gr_overscan_offset_y());
+  return point;
+}
+
+int ScreenRecoveryUI::SelectMenu(const Point& p) {
+  const Point point = TouchPoint(p);
 
   int new_sel = Device::kNoAction;
   std::lock_guard<std::mutex> lg(updateMutex);
@@ -1730,7 +1861,7 @@ size_t ScreenRecoveryUI::ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
         action = Device::kInvokeItem;
         selected = touch_sel;
       }
-    } else {
+    } else if (evt.type() == EventType::KEY) {
       bool visible = IsTextVisible();
       action = key_handler(evt.key(), visible);
     }

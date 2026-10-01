@@ -122,7 +122,6 @@ inline constexpr Translation kTranslations[] = {
   {"Clear input","清空输入"},
   {"Enter your lock-screen PIN","输入锁屏 PIN"},
   {"Enter your lock-screen password","输入锁屏密码"},
-  {"Select pattern dots in order (1-9, top-left to bottom-right)","按顺序选择图案点（1 至 9，从左上到右下）"},
   {"Space","空格"},
   {"Entered characters: %d","已输入字符数：%d"},
   {"Retry after %d seconds","请等待 %d 秒后重试"},
@@ -146,6 +145,8 @@ inline constexpr Translation kTranslations[] = {
   {"Storage decryption timed out","存储解密超时"},
   {"The storage decryption worker stopped","存储解密进程已停止"},
   {"Internal storage is still locked","内部存储仍未解锁"},
+  {"Draw your lock-screen pattern","绘制锁屏图案"},
+  {"Connect at least 4 dots, then tap Unlock","连接至少 4 个点，然后点按解锁"},
 };
 inline std::string Tr(const std::string& text) {
   if(GetLanguage()!=Language::Chinese) return text;
