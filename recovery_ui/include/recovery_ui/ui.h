@@ -205,6 +205,9 @@ class RecoveryUI {
   virtual void Print(const char* fmt, ...) __printflike(2, 3) = 0;
   virtual void PrintOnScreenOnly(const char* fmt, ...) __printflike(2, 3) = 0;
 
+  // Clears transient on-screen text without affecting the recovery log.
+  virtual void ClearText() {}
+
   // Shows the contents of the given file. Caller ensures the patition that contains the file has
   // been mounted.
   virtual void ShowFile(const std::string& filename) = 0;

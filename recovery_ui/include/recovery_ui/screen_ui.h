@@ -347,6 +347,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   // printing messages
   void Print(const char* fmt, ...) override __printflike(2, 3);
   void PrintOnScreenOnly(const char* fmt, ...) override __printflike(2, 3);
+  void ClearText() override;
   void ShowFile(const std::string& filename) override;
   bool ReadPattern(recovery_ui::PatternInput& input) override;
 
