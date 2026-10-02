@@ -218,7 +218,8 @@ bool TextMenu::DashboardCandidate() const {
 }
 std::string TextMenu::PageTitle() const {
   if (text_headers_.size() == 1) {
-    if (text_headers_[0] == "ADB Sideload" || text_headers_[0] == "Install result") return text_headers_[0];
+    if (text_headers_[0] == "ADB Sideload" || text_headers_[0] == "Install result" ||
+        text_headers_[0] == "Flash result" || text_headers_[0] == "Flash partition image") return text_headers_[0];
     if (text_headers_[0] == "Settings" || text_headers_[0] == "Language" ||
         text_headers_[0] == "Reboot options" || text_headers_[0] == "Advanced tools") return text_headers_[0];
     if (text_headers_[0] == "Advanced options") return "Tools";
@@ -231,7 +232,9 @@ std::string TextMenu::PageTitle() const {
   return IsMain() ? "Recovery" : "Confirm or select";
 }
 int TextMenu::DrawHeader(int x, int y) const {
-  if (text_headers_ == std::vector<std::string>{"Install result"}) return 0;
+  if (text_headers_ == std::vector<std::string>{"Install result"} ||
+      text_headers_ == std::vector<std::string>{"Flash result"} ||
+      text_headers_ == std::vector<std::string>{"Flash partition image"}) return 0;
   if (text_headers_.size() == 1 && (text_headers_[0] == "Advanced options" ||
       text_headers_[0] == "Apply update" || text_headers_[0] == "Factory reset" ||
       text_headers_[0] == "Settings" || text_headers_[0] == "Language" ||
@@ -1503,7 +1506,7 @@ bool ScreenRecoveryUI::IsInstallPageLocked() const {
   if (!menu_) return true;
   // Confirmation menus always take priority over the installation dashboard.
   const auto title = menu_->PageTitle();
-  return title == "Install result" ||
+  return title == "Install result" || title == "Flash result" ||
       (m3e_install_stage_ == InstallStage::WAITING && title == "ADB Sideload");
 }
 
@@ -1516,7 +1519,8 @@ void ScreenRecoveryUI::DrawInstallPageLocked() {
   int bottom = ScreenHeight() - top;
   int rows = menu_ ? std::min<size_t>(2, menu_->ItemsCount()) : 0;
   int y = recovery_m3e::DrawInstallHeader(canvas, m, top, bottom, rows,
-      menu_ && menu_->selection() == -1, title_lines_, palette);
+      menu_ && menu_->selection() == -1, title_lines_, palette,
+      recovery_ui::IsFlashStage(m3e_install_stage_) ? "Flash partition image" : "Install update");
   auto layout = recovery_m3e::InstallationLayout(m, y, bottom, rows,
       gr_get_width(status_logo_.get()), gr_get_height(status_logo_.get()));
   if (layout.logo.w > 0) {

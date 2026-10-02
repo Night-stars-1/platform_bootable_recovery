@@ -132,6 +132,18 @@ void CheckProgress() {
     auto expected=stage==InstallStage::ERROR?p.error:stage==InstallStage::SUCCESS?p.alert_success:p.alert_warning;
     assert(c.runs[0].color.r==expected.r && c.runs[0].color.g==expected.g && c.runs[0].color.b==expected.b);
   }
+  for(auto stage:{InstallStage::FLASH_PREPARING,InstallStage::FLASH_WRITING,
+      InstallStage::FLASH_VERIFYING,InstallStage::FLASH_SUCCESS,InstallStage::FLASH_ERROR}) {
+    assert(recovery_ui::IsFlashStage(stage));
+    PixelCanvas c(360,800);DrawInstallPanel(c,m,{24,24,312,188},stage,0.42,true,false,{},p);
+    assert(!c.runs.empty());
+    // Long English titles may be ellipsized to leave room for the percentage.
+    assert(c.runs[0].text.rfind(std::string(InstallTitle(stage,false)).substr(0,8),0)==0);
+    assert(c.Has("100%")== (stage==InstallStage::FLASH_SUCCESS));
+    if(stage==InstallStage::FLASH_WRITING || stage==InstallStage::FLASH_VERIFYING) assert(c.Has("42%"));
+    if(stage==InstallStage::FLASH_ERROR) assert(c.runs[0].color.r==p.error.r);
+    assert(!c.Has("adb sideload <filename>"));
+  }
 }
 int main(int argc,char** argv) {
   assert(argc==2);std::string out=argv[1];

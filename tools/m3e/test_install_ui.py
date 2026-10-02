@@ -79,6 +79,8 @@ void CheckRouting() {
   ui.SetInstallStage(InstallStage::INSTALLING);assert(ui.IsInstallPageLocked());
   ui.menu_=std::make_unique<TestMenu>(TestMenu{"Factory reset"});assert(!ui.IsInstallPageLocked());
   ui.menu_->title="Install result";ui.SetInstallStage(InstallStage::ERROR);assert(ui.IsInstallPageLocked());
+  ui.menu_->title="Flash result";ui.SetInstallStage(InstallStage::FLASH_ERROR);assert(ui.IsInstallPageLocked());
+  ui.menu_->title="Confirm or select";assert(!ui.IsInstallPageLocked());
   ui.m3e_install_logs_={"error detail"};ui.SetInstallStage(InstallStage::NONE);assert(!ui.IsInstallPageLocked());
   ui.SetInstallStage(InstallStage::ERROR);assert(ui.m3e_install_logs_.empty());
   ui.SetInstallStage(InstallStage::WAITING);assert(ui.m3e_install_logs_.empty());

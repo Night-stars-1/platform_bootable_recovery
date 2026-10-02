@@ -253,7 +253,7 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
   InstallResult status = INSTALL_NONE;
 
   for (;;) {
-    non_storage_items = 1; // ADB sideload, at least
+    non_storage_items = 1; // ADB sideload
 
     items.clear();
     items.push_back("Apply from ADB");

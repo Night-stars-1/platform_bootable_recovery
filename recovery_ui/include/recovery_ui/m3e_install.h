@@ -18,9 +18,9 @@ inline bool CompactInstallHeader(const Metrics& m,int top,int bottom,int menu_ro
 }
 inline int DrawInstallHeader(Canvas& c,const Metrics& m,int top,int bottom,int menu_rows,
                              bool back_selected,const std::vector<std::string>& details,
-                             const Palette& p) {
+                             const Palette& p, const std::string& title = "Install update") {
   if(!CompactInstallHeader(m,top,bottom,menu_rows)) {
-    return DrawHeader(c,m,top,menu_rows>0,back_selected,false,0,0,details,p,"Install update",false);
+    return DrawHeader(c,m,top,menu_rows>0,back_selected,false,0,0,details,p,title,false);
   }
   // Keep both result actions reachable on landscape/compact displays. The back hit area
   // stays identical to the regular header used by ScreenRecoveryUI::SelectMenu.
@@ -31,7 +31,7 @@ inline int DrawInstallHeader(Canvas& c,const Metrics& m,int top,int bottom,int m
     x+=back.w+Dp(m.width,12);
   }
   Label(c,m,x,top+Dp(m.width,13),m.width-m.inset-x-Dp(m.width,90),
-        "Install update",Font::Menu,p.text,true);
+        title,Font::Menu,p.text,true);
   return top+back.h+Dp(m.width,12);
 }
 
@@ -54,6 +54,11 @@ inline InstallLayout InstallationLayout(const Metrics& m,int top,int bottom,int 
 
 inline const char* InstallTitle(InstallStage stage,bool security_update) {
   switch(stage) {
+    case InstallStage::FLASH_PREPARING: return "Preparing partition image";
+    case InstallStage::FLASH_WRITING: return "Writing partition image";
+    case InstallStage::FLASH_VERIFYING: return "Verifying partition contents";
+    case InstallStage::FLASH_SUCCESS: return "Partition flash complete";
+    case InstallStage::FLASH_ERROR: return "Partition flash failed";
     case InstallStage::WAITING: return "Waiting for a package";
     case InstallStage::VERIFYING: return "Verifying update";
     case InstallStage::INSTALLING: return security_update?"Installing security update":"Installing update";
@@ -65,6 +70,11 @@ inline const char* InstallTitle(InstallStage stage,bool security_update) {
 }
 inline const char* InstallHint(InstallStage stage) {
   switch(stage) {
+    case InstallStage::FLASH_PREPARING: return "Creating an immutable copy before writing.";
+    case InstallStage::FLASH_WRITING: return "Do not reboot or disconnect power.";
+    case InstallStage::FLASH_VERIFYING: return "Comparing the written bytes with the image.";
+    case InstallStage::FLASH_SUCCESS: return "The selected partition passed read-back verification.";
+    case InstallStage::FLASH_ERROR: return "Open the recovery log for details.";
     case InstallStage::WAITING: return "Send the update package from your computer.";
     case InstallStage::VERIFYING: return "Checking the package signature.";
     case InstallStage::INSTALLING: return "Keep the USB cable connected.";
@@ -78,15 +88,17 @@ inline void DrawInstallPanel(Canvas& c,const Metrics& m,Rect panel,InstallStage 
                              double fraction,bool determinate,bool security_update,
                              const std::vector<std::string>& logs,const Palette& p) {
   if(panel.w<=0 || panel.h<=0) return;
-  Color accent=stage==InstallStage::ERROR?p.error:stage==InstallStage::SUCCESS?p.alert_success:
+  bool error=stage==InstallStage::ERROR || stage==InstallStage::FLASH_ERROR;
+  bool complete=stage==InstallStage::SUCCESS || stage==InstallStage::FLASH_SUCCESS;
+  Color accent=error?p.error:complete?p.alert_success:
       stage==InstallStage::CANCELLED?p.alert_warning:p.primary;
-  Rounded(c,panel,Dp(m.width,28),stage==InstallStage::ERROR?p.error_surface:p.card);
+  Rounded(c,panel,Dp(m.width,28),error?p.error_surface:p.card);
   bool compact=panel.h<Dp(m.width,140);
   int pad=Dp(m.width,compact?8:16),x=panel.x+pad,y=panel.y+pad;
   int width=panel.w-2*pad,bottom=panel.y+panel.h-pad;
   int title_height=LineHeight(FontPixels(Font::Menu,m.width));
-  bool progress_stage=stage==InstallStage::VERIFYING || stage==InstallStage::INSTALLING;
-  bool complete=stage==InstallStage::SUCCESS;
+  bool progress_stage=stage==InstallStage::VERIFYING || stage==InstallStage::INSTALLING ||
+      stage==InstallStage::FLASH_WRITING || stage==InstallStage::FLASH_VERIFYING;
   fraction=std::isfinite(fraction)?std::clamp(fraction,0.0,1.0):0.0;
   std::string percent=(progress_stage && determinate) || complete?
       std::to_string(complete?100:static_cast<int>(fraction*100))+"%":"";

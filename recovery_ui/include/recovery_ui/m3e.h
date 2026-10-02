@@ -89,9 +89,9 @@ inline Icon IconFor(const std::string& label) {
   if (label=="Settings" || label=="Advanced tools") return Icon::Tools;
   if (label.find("Reboot") != std::string::npos || label.find("Power") != std::string::npos) return Icon::Power;
   if (label.find("Factory") != std::string::npos || label.find("Format") != std::string::npos || label.find("Wipe") != std::string::npos) return Icon::Trash;
-  if (label.find("Apply") != std::string::npos || label.find("ADB") != std::string::npos) return Icon::Download;
+  if (label.find("Apply") != std::string::npos || label.find("ADB") != std::string::npos || label=="Flash partition image") return Icon::Download;
   if (label.find("Advanced") != std::string::npos || label.find("fastboot") != std::string::npos) return Icon::Tools;
-  if (label.find('/') != std::string::npos || label.find(".zip") != std::string::npos || label.find("log") != std::string::npos) return Icon::File;
+  if (label.find('/') != std::string::npos || label.find(".zip") != std::string::npos || label.find(".img") != std::string::npos || label.find("log") != std::string::npos) return Icon::File;
   return Icon::Arrow;
 }
 inline void DrawIcon(Canvas& c, Rect b, Icon icon, Color color) {
@@ -159,6 +159,7 @@ inline std::string Subtitle(const std::string& name) {
   if(name=="English") return GetLanguage()==Language::English?"Current language":"Tap to use this language";
   if(name=="简体中文") return GetLanguage()==Language::Chinese?"Current language":"Tap to use this language";
   if(name=="Apply from ADB") return "Send a package from your computer";
+  if(name=="Flash partition image") return "Choose an IMG and a physical partition";
   if(name=="Enter fastboot") return "Manage logical partitions";
   if(name=="Reboot to bootloader") return "Open the bootloader";
   if(name=="Reboot to recovery") return "Restart this recovery";
