@@ -298,15 +298,28 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
       return INSTALL_KEY_INTERRUPTED;
     }
 
+    // Keep MTP available while the source-selection page is open so the user can
+    // upload, remove, or rename packages. Stop it only once an install source
+    // has actually been selected and the installer is about to access it.
+    const auto stop_mtp_for_install = [&]() {
+      if (recovery_mtp::Stop()) return true;
+      ui->Print("Could not stop USB file transfer. Please retry.\n");
+      return false;
+    };
+
     if (chosen == item_sideload) {
+      if (!stop_mtp_for_install()) return INSTALL_ERROR;
       status = ApplyFromAdb(device, false /* rescue_mode */, reboot_action);
     } else if (item_crypto >= 0 && chosen == item_crypto) {
+      if (!stop_mtp_for_install()) return INSTALL_ERROR;
       status = ApplyFromEncryptedStorage(device);
     } else if (item_virtiofs >= 0 && chosen == item_virtiofs) {
+      if (!stop_mtp_for_install()) return INSTALL_ERROR;
       status = ApplyFromVirtiofs(device);
     } else {
       if (chosen < static_cast<int>(non_storage_items) ||
           static_cast<size_t>(chosen - non_storage_items) >= volumes.size()) break;
+      if (!stop_mtp_for_install()) return INSTALL_ERROR;
       status = ApplyFromStorage(device, volumes[chosen - non_storage_items]);
     }
     break;
@@ -578,7 +591,8 @@ change_menu:
             ? Device::REBOOT
             : device->InvokeMenuItem(chosen_item);
 
-    if (chosen_action != Device::NO_ACTION && chosen_action != Device::MENU_BASE &&
+    if (chosen_action != Device::NO_ACTION && chosen_action != Device::APPLY_UPDATE &&
+        chosen_action != Device::MENU_BASE &&
         chosen_action != Device::MENU_WIPE && chosen_action != Device::MENU_ADVANCED &&
         !recovery_mtp::Stop()) {
       ui->Print("Could not stop USB file transfer. Please retry.\n");
