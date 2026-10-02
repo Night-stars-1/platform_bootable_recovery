@@ -127,6 +127,7 @@ cc_defaults {
     static_libs: [
         "libinstall",
         "librecovery_crypto",
+        "librecovery_mtp_controller",
         "librecovery_fastboot",
         "libminui",
         "librecovery_utils",
