@@ -9,6 +9,7 @@
 #include <android-base/properties.h>
 #include <android-base/unique_fd.h>
 #include <recovery_crypto/session.h>
+#include <recovery_crypto/media_access.h>
 #include <fcntl.h>
 #include <sys/resource.h>
 #include <unistd.h>
@@ -28,12 +29,13 @@ int main() {
   constexpr char root[] = "/data/media/0";
   recovery_mtp::Database database(root);
   if (!database.valid()) return 2;
+  database.EnableWrites(recovery_crypto::MediaWritesRequested());
   android::base::unique_fd control(open(android::FFS_MTP_EP0, O_RDWR | O_CLOEXEC));
   if (control.get() < 0 || !android::writeDescriptors(control.get(), false)) return 3;
   const auto manufacturer = GetProperty("ro.product.manufacturer", "Android");
   const auto model = GetProperty("ro.product.model", "Recovery");
   const auto serial = GetProperty("ro.serialno", "recovery");
-  android::MtpStorage storage(recovery_mtp::kStorageId, root, "Internal storage (read-only)", false, 0);
+  android::MtpStorage storage(recovery_mtp::kStorageId, root, database.recoveryStorageWritable() ? "Internal storage" : "Internal storage (read-only)", false, 0);
   android::MtpServer server(&database, control.release(), false, manufacturer.c_str(),
                             model.c_str(), "1.0", serial.c_str());
   server.addStorage(&storage);

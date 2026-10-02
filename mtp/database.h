@@ -14,13 +14,21 @@ namespace recovery_mtp {
 using namespace android;
 constexpr MtpStorageID kStorageId = 0x00010001;
 
-// Read-only index of a single, already unlocked media directory. Never exposes
+// Index of a single, already unlocked media directory. Never exposes
 // symlinks, device nodes, other filesystems or host-supplied paths. All relative
 // paths start at the pinned media root; no separate key directory is indexed.
 class Database final : public IMtpDatabase {
  public:
   explicit Database(const std::string& root, size_t limit = 100000);
+  ~Database() override;
   bool valid() const { return root_.get() >= 0; }
+  void EnableWrites(bool enable);
+  bool recoveryStorageWritable() override { return writable_; }
+  MtpResponseCode recoveryBeginUpload(const char* name, MtpObjectFormat format,
+      MtpObjectHandle parent, MtpStorageID storage, uint64_t size, MtpObjectHandle* handle) override;
+  int recoveryUploadFd(MtpObjectHandle handle) override;
+  MtpResponseCode recoveryFinishUpload(MtpObjectHandle handle, bool success) override;
+  MtpResponseCode recoveryDelete(MtpObjectHandle handle) override;
   MtpObjectHandle beginSendObject(const char*, MtpObjectFormat, MtpObjectHandle, MtpStorageID) override { return kInvalidObjectHandle; }
   void endSendObject(MtpObjectHandle, bool) override {}
   void rescanFile(const char*, MtpObjectHandle, MtpObjectFormat) override {}
@@ -56,6 +64,7 @@ class Database final : public IMtpDatabase {
     struct stat stat{};
     MtpObjectHandle parent = 0;
     bool scanned = false;
+    bool alive = true, pending = false;
   };
   android::base::unique_fd Open(const std::string& path) const;
   android::base::unique_fd OpenEntry(MtpObjectHandle handle) const;
@@ -64,7 +73,14 @@ class Database final : public IMtpDatabase {
   const Entry* Get(MtpObjectHandle handle) const;
   MtpObjectFormat Format(const Entry& entry) const;
   MtpDataType PropertyType(MtpObjectProperty property) const;
+  bool ValidName(const std::string& name) const;
+  void CancelUpload();
+  bool DeleteEntry(MtpObjectHandle handle);
   android::base::unique_fd root_, transfer_;
+  android::base::unique_fd upload_, upload_parent_;
+  MtpObjectHandle upload_handle_ = kInvalidObjectHandle;
+  uint64_t upload_size_ = 0;
+  bool writable_ = false;
   std::string transfer_path_;
   std::vector<Entry> entries_;
   size_t limit_;

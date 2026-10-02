@@ -10,6 +10,7 @@ import re
 import subprocess
 import tempfile
 import unittest
+import shutil
 
 SPEC = importlib.util.spec_from_file_location('prepare_mtp', Path(__file__).with_name('prepare_platform.py'))
 HELPER = importlib.util.module_from_spec(SPEC)
@@ -53,7 +54,20 @@ class Deployment(unittest.TestCase):
             target.mkdir(parents=True)
             subprocess.run(['git', 'init', '-q', str(target)], check=True)
             subprocess.run(['git', '-C', str(target), 'config', 'core.autocrlf', 'false'], check=True)
-            for path, data in fixture((HELPER.PAYLOAD / patch).read_text()).items():
+            combined = fixture((HELPER.PAYLOAD / patch).read_text())
+            # Both patch generations use original source line offsets. Merge
+            # their real context; placeholder lines are not reviewed input.
+            for path, data in fixture((HELPER.PAYLOAD / patch.replace('.patch', '-readonly-v1.patch')).read_text()).items():
+                old_lines = data.splitlines(True)
+                lines = combined.get(path, '').splitlines(True)
+                while len(lines) < len(old_lines): lines.append(f'// unrelated fixture line {len(lines)}\n')
+                for i, line in enumerate(old_lines):
+                    if not line.startswith('// unrelated fixture line '):
+                        if not lines[i].startswith('// unrelated fixture line ') and lines[i] != line:
+                            raise AssertionError('Old/new reviewed context differs')
+                        lines[i] = line
+                combined[path] = ''.join(lines)
+            for path, data in combined.items():
                 file = target / path
                 file.parent.mkdir(parents=True, exist_ok=True)
                 file.write_text(data, encoding='utf-8', newline='\n')
@@ -83,7 +97,7 @@ class Deployment(unittest.TestCase):
     def test_modified_owned_block_cannot_be_duplicated(self):
         self.deploy()
         bp = self.root / 'frameworks/av/media/mtp/Android.bp'
-        bp.write_text(bp.read_text().replace('"-DRECOVERY_MTP_READONLY"', '"-DRECOVERY_MTP_UNSAFE"'), encoding='utf-8', newline='\n')
+        bp.write_text(bp.read_text().replace('"-DRECOVERY_MTP"', '"-DRECOVERY_MTP_UNSAFE"'), encoding='utf-8', newline='\n')
         with self.assertRaisesRegex(ValueError, 'Partial/modified'):
             HELPER.plan(self.root)
 
@@ -97,6 +111,52 @@ class Deployment(unittest.TestCase):
     def test_paths_cannot_escape_tree(self):
         with self.assertRaises(ValueError):
             HELPER.trusted_path(self.root, '../outside')
+
+    def test_upgrade_from_complete_readonly_deployment(self):
+        for repository, patch in HELPER.PATCHES.items():
+            operation = HELPER.git(self.root / repository, 'apply', str(HELPER.PAYLOAD / patch.replace('.patch', '-readonly-v1.patch')))
+            self.assertEqual(0, operation.returncode, operation.stderr)
+        before = (self.root / 'frameworks/av/media/mtp/MtpServer.cpp').read_bytes()
+        upgrade = HELPER.plan(self.root)
+        self.assertTrue(all(item[2] for item in upgrade))
+        self.assertEqual(before, (self.root / 'frameworks/av/media/mtp/MtpServer.cpp').read_bytes())
+        self.deploy()
+        self.assertFalse(any(item[2] for item in HELPER.plan(self.root)))
+        self.assertIn('recoveryBeginUpload', (self.root / 'frameworks/av/media/mtp/MtpServer.cpp').read_text())
+
+    def test_source_race_is_refused_before_first_write(self):
+        plan = HELPER.plan(self.root)
+        file = self.root / 'system/sepolicy/private/recovery.te'
+        file.write_text('// changed concurrently\n' + file.read_text())
+        original = (self.root / 'frameworks/av/media/mtp/Android.bp').read_bytes()
+        with self.assertRaisesRegex(ValueError, 'Source changed'):
+            HELPER.apply(self.root, plan)
+        self.assertEqual(original, (self.root / 'frameworks/av/media/mtp/Android.bp').read_bytes())
+
+    def test_m4_write_exception_only_in_adapted_recovery(self):
+        executable = shutil.which('m4')
+        if not executable:
+            self.skipTest('m4 absent: run source expansion test on Linux; no compiler needed')
+        self.deploy()
+        source = (self.root / 'system/sepolicy/private/recovery.te').read_text()
+        # Expand the real staged policy; this checks quoting and conditional
+        # scope only. It does not invoke checkpolicy/secilc or validate policydb.
+        macros = "define(`recovery_only', `ifelse(target_recovery, `true', `$1')')\n"
+        macros += "define(`with_native_coverage', `')\n"
+        for recovery in ('true', 'false'):
+            for enabled in ('true', 'false'):
+                with self.subTest(recovery=recovery, enabled=enabled):
+                    result = subprocess.run([executable, '-Dtarget_recovery=' + recovery,
+                                             '-Drecovery_mtp=' + enabled],
+                                            input=(macros + source).encode(), capture_output=True, timeout=30)
+                    self.assertEqual(0, result.returncode, result.stderr.decode())
+                    text = re.sub(r'^#.*$', '', result.stdout.decode(), flags=re.M)
+                    permitted = recovery == enabled == 'true'
+                    self.assertEqual(permitted, '-media_rw_data_file' in text)
+                    self.assertEqual(permitted, 'allow recovery media_rw_data_file:file' in text)
+                    self.assertNotIn('-keystore_data_file', text)
+                    self.assertNotIn('-vold_data_file', text)
+                    self.assertIn('no_x_file_perms', text)
 
 
 if __name__ == '__main__':
