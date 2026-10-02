@@ -110,7 +110,8 @@ bool UnlockStorage(Device* device) {
   }
 }
 
-std::string BrowseInternalStorage(Device* device, const std::string& root) {
+std::string BrowseInternalStorage(Device* device, const std::string& root,
+                                 const std::string& extension, const std::string& title) {
   std::string current = root;
   for (;;) {
     DIR* directory = opendir(current.c_str());
@@ -124,7 +125,7 @@ std::string BrowseInternalStorage(Device* device, const std::string& root) {
       // Avoid filesystem exceptions and symlink loops/escapes; this optional
       // picker cannot browse above the selected user's media root.
       if (S_ISDIR(st.st_mode)) directories.push_back(name + "/");
-      else if (S_ISREG(st.st_mode) && android::base::EndsWithIgnoreCase(name, ".zip")) files.push_back(name);
+      else if (S_ISREG(st.st_mode) && android::base::EndsWithIgnoreCase(name, extension)) files.push_back(name);
     }
     closedir(directory);
     std::sort(directories.begin(), directories.end());
@@ -132,7 +133,7 @@ std::string BrowseInternalStorage(Device* device, const std::string& root) {
     std::vector<std::string> items{current == root ? "Cancel" : "../"};
     items.insert(items.end(), directories.begin(), directories.end());
     items.insert(items.end(), files.begin(), files.end());
-    const auto picked = Select(device, {"Choose ZIP from internal storage", current}, items);
+    const auto picked = Select(device, {title, current}, items);
     if (picked == static_cast<size_t>(Device::kGoHome) ||
         picked == static_cast<size_t>(RecoveryUI::KeyError::INTERRUPTED)) return {};
     if (picked == 0 || picked == static_cast<size_t>(Device::kGoBack)) {
@@ -150,6 +151,11 @@ std::string BrowseInternalStorage(Device* device, const std::string& root) {
 
 bool RecoveryCryptoAvailable() { return recovery_crypto::BackendInstalled(); }
 
+std::string ChooseRecoveryStorageFile(Device* device, const std::string& root,
+                                     const std::string& extension, const std::string& title) {
+  return BrowseInternalStorage(device, root, extension, title);
+}
+
 bool UnlockRecoveryStorage(Device* device) {
   if (!RecoveryCryptoAvailable()) return false;
   if (recovery_crypto::VerifyUserStorage(kUser)) return true;
@@ -159,7 +165,7 @@ bool UnlockRecoveryStorage(Device* device) {
 InstallResult ApplyFromEncryptedStorage(Device* device) {
   if (!UnlockRecoveryStorage(device)) return INSTALL_NONE;
   const auto root = recovery_crypto::UserStoragePath(kUser);
-  const auto path = BrowseInternalStorage(device, root);
+  const auto path = ChooseRecoveryStorageFile(device, root, ".zip", "Choose ZIP from internal storage");
   if (path.empty() || path == "@") return INSTALL_NONE;
   // No .map files or symlinks escaping this user's media tree.
   char* resolved = realpath(path.c_str(), nullptr);
