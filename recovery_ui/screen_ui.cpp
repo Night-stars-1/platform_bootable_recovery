@@ -1062,7 +1062,13 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(const std::vector<std::s
                              title_lines_, HasTouchScreen(), HasThreeButtons(), recent, palette);
     return;
   }
-  // Preserve full upstream output during installation and log viewing.
+  // No menu is active while services start or an action returns to its parent.
+  // Only the explicitly opened file viewer should render a full text page.
+  if (!file_viewer_text_ || text_ != file_viewer_text_) {
+    DrawStatusPageLocked();
+    return;
+  }
+  // Preserve the complete output when the user explicitly opens a log file.
   SetColor(UIElement::LOG);
   int row = text_row_;
   size_t count = 0;
@@ -1073,8 +1079,25 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(const std::vector<std::s
     if (row < 0) row = text_rows_ - 1;
   }
 }
+
+void ScreenRecoveryUI::DrawStatusPageLocked() {
+  using namespace recovery_m3e;
+  M3eCanvas canvas;
+  Metrics m(ScreenWidth());
+  auto palette = Palette::ForMode(fastbootd_logo_enabled_);
+  int top = std::max(margin_height_, Dp(m.width, 24));
+  std::string title = m3e_status_title_.empty() ?
+      (fastbootd_logo_enabled_ ? "Fastboot" : "Recovery") : m3e_status_title_;
+  int y = DrawHeader(canvas, m, top, false, false, fastbootd_logo_enabled_,
+      char_width_, char_height_, title_lines_, palette, title, false);
+  DrawPrompt(canvas, m, y,
+      {m3e_status_message_.empty() ? "Please wait" : m3e_status_message_},
+      palette, AlertLevel::Info);
+}
+
 void ScreenRecoveryUI::draw_battery_capacity_locked() {
-  if (is_battery_less || (!menu_ && !IsInstallPageLocked())) return;
+  if (is_battery_less || (!menu_ && !IsInstallPageLocked() &&
+      (!show_text || (file_viewer_text_ && text_ == file_viewer_text_)))) return;
   M3eCanvas canvas;
   recovery_m3e::Metrics m(ScreenWidth());
   int top = std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
@@ -1476,6 +1499,13 @@ void ScreenRecoveryUI::SetInstallStage(InstallStage stage) {
   update_screen_locked();
 }
 
+void ScreenRecoveryUI::SetStatusMessage(const std::string& title, const std::string& message) {
+  std::lock_guard<std::mutex> lg(updateMutex);
+  m3e_status_title_ = title;
+  m3e_status_message_ = message;
+  update_screen_locked();
+}
+
 bool ScreenRecoveryUI::IsInstallPageLocked() const {
   if (m3e_install_stage_ == InstallStage::NONE) return false;
   if (!menu_) return true;
@@ -1688,19 +1718,27 @@ void ScreenRecoveryUI::ShowFile(const std::string& filename) {
     return;
   }
 
-  char** old_text = text_;
-  size_t old_text_col = text_col_;
-  size_t old_text_row = text_row_;
-
-  // Swap in the alternate screen and clear it.
-  text_ = file_viewer_text_;
+  char** old_text;
+  size_t old_text_col, old_text_row;
+  {
+    std::lock_guard<std::mutex> lock(updateMutex);
+    old_text = text_;
+    old_text_col = text_col_;
+    old_text_row = text_row_;
+    // Swap in the explicit text viewer under the same lock as the renderer.
+    text_ = file_viewer_text_;
+  }
   ClearText();
 
   ShowFile(fp.get());
 
-  text_ = old_text;
-  text_col_ = old_text_col;
-  text_row_ = old_text_row;
+  {
+    std::lock_guard<std::mutex> lock(updateMutex);
+    text_ = old_text;
+    text_col_ = old_text_col;
+    text_row_ = old_text_row;
+    update_screen_locked();
+  }
 }
 
 std::unique_ptr<Menu> ScreenRecoveryUI::CreateMenu(
@@ -1834,8 +1872,11 @@ size_t ScreenRecoveryUI::ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
   CHECK(menu != nullptr);
 
   // Starts and displays the menu
-  menu_ = std::move(menu);
-  Redraw();
+  {
+    std::lock_guard<std::mutex> lock(updateMutex);
+    menu_ = std::move(menu);
+    update_screen_locked();
+  }
 
   int selected = menu_->selection();
   int chosen_item = -1;
@@ -1844,6 +1885,8 @@ size_t ScreenRecoveryUI::ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
     if (evt.type() == EventType::EXTRA) {
       if (evt.key() == static_cast<int>(KeyError::INTERRUPTED)) {
         // WaitKey() was interrupted.
+        std::lock_guard<std::mutex> lock(updateMutex);
+        menu_.reset();
         return static_cast<size_t>(KeyError::INTERRUPTED);
       }
       if (evt.key() == static_cast<int>(KeyError::TIMED_OUT)) {  // WaitKey() timed out.
@@ -1851,8 +1894,9 @@ size_t ScreenRecoveryUI::ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
           continue;
         } else {
           LOG(INFO) << "Timed out waiting for key input; rebooting.";
+          std::lock_guard<std::mutex> lock(updateMutex);
           menu_.reset();
-          Redraw();
+          update_screen_locked();
           return static_cast<size_t>(KeyError::TIMED_OUT);
         }
       }
@@ -1927,7 +1971,10 @@ size_t ScreenRecoveryUI::ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
     }
   }
 
-  menu_.reset();
+  {
+    std::lock_guard<std::mutex> lock(updateMutex);
+    menu_.reset();
+  }
 
   return chosen_item;
 }

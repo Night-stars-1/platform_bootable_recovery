@@ -330,6 +330,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   void SetBackground(Icon icon) override;
   void SetSystemUpdateText(bool security_update) override;
   void SetInstallStage(InstallStage stage) override;
+  void SetStatusMessage(const std::string& title, const std::string& message) override;
 
   // progress indicator
   void SetProgressType(ProgressType type) override;
@@ -442,6 +443,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   virtual void draw_foreground_locked();
   virtual void draw_screen_locked();
   virtual void draw_menu_and_text_buffer_locked(const std::vector<std::string>& help_message);
+  void DrawStatusPageLocked();
   virtual void update_screen_locked();
   virtual void update_progress_locked();
 
@@ -499,6 +501,8 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   int m3e_menu_bottom_ = 0;
   InstallStage m3e_install_stage_ = InstallStage::NONE;
   std::vector<std::string> m3e_install_logs_;
+  std::string m3e_status_title_;
+  std::string m3e_status_message_;
   bool IsInstallPageLocked() const;
   void DrawInstallPageLocked();
   void DrawPatternPageLocked();

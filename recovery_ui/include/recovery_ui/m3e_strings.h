@@ -147,6 +147,7 @@ inline constexpr Translation kTranslations[] = {
   {"Internal storage is still locked","内部存储仍未解锁"},
   {"Draw your lock-screen pattern","绘制锁屏图案"},
   {"Connect at least 4 dots, then tap Unlock","连接至少 4 个点，然后点按解锁"},
+  {"Please wait","请稍候"},
 };
 inline std::string Tr(const std::string& text) {
   if(GetLanguage()!=Language::Chinese) return text;
