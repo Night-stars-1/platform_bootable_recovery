@@ -10,6 +10,10 @@ import tempfile
 
 PAYLOAD = Path(__file__).resolve().parents[2] / 'mtp/platform'
 PATCHES = {'frameworks/av': 'frameworks-av.patch', 'system/sepolicy': 'sepolicy.patch'}
+LEGACY_PATCHES = {
+    'frameworks/av': ('frameworks-av-writable-v2.patch', 'frameworks-av-readonly-v1.patch'),
+    'system/sepolicy': ('sepolicy-readonly-v1.patch',),
+}
 
 
 def trusted_path(root, relative):
@@ -49,8 +53,12 @@ def plan(root):
         if git(repository, 'apply', '--reverse', '--check', str(patch)).returncode == 0:
             result.append((relative, {}, False))
             continue
-        legacy = PAYLOAD / filename.replace('.patch', '-readonly-v1.patch')
-        upgrade = git(repository, 'apply', '--reverse', '--check', str(legacy)).returncode == 0
+        matches = [PAYLOAD / name for name in LEGACY_PATCHES[relative]
+                   if git(repository, 'apply', '--reverse', '--check', str(PAYLOAD / name)).returncode == 0]
+        if len(matches) > 1:
+            raise ValueError('Ambiguous Recovery MTP deployment: ' + relative)
+        legacy = matches[0] if matches else None
+        upgrade = legacy is not None
         if not upgrade and any(b'RECOVERY_MTP' in data for data in originals.values()):
             raise ValueError('Partial/modified Recovery MTP deployment: ' + relative)
         # Stage the exact reviewed old -> new transition. Never unpatch the live
@@ -64,7 +72,7 @@ def plan(root):
             if upgrade:
                 operation = git(stage, 'apply', '--reverse', str(legacy))
                 if operation.returncode:
-                    raise ValueError('Cannot stage read-only MTP upgrade: ' + operation.stderr)
+                    raise ValueError('Cannot stage previous MTP upgrade: ' + operation.stderr)
             check = git(stage, 'apply', '--check', str(patch))
             if check.returncode:
                 raise ValueError('Recovery MTP patch conflicts in ' + relative + ': ' + check.stderr.strip())

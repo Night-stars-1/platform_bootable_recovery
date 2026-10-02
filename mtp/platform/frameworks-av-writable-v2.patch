@@ -471,22 +471,3 @@ diff --git a/media/mtp/IMtpDatabase.h b/media/mtp/IMtpDatabase.h
      virtual ~IMtpDatabase() {}
  
      // Called from SendObjectInfo to reserve a database entry for the incoming file.
-diff --git a/media/mtp/MtpDataPacket.cpp b/media/mtp/MtpDataPacket.cpp
---- a/media/mtp/MtpDataPacket.cpp
-+++ b/media/mtp/MtpDataPacket.cpp
-@@ -29,6 +29,7 @@
- 
- namespace android {
- 
-+#ifdef MTP_HOST
- namespace {
- // Reads the exact |count| bytes from |fd| to |buf|.
- // Returns |count| if it succeed to read the bytes. Otherwise returns -1. If it reaches EOF, the
-@@ -49,6 +50,7 @@
-     return read_count == count ? count : -1;
- }
- }  // namespace
-+#endif  // MTP_HOST
- 
- MtpDataPacket::MtpDataPacket()
-     :   MtpPacket(MTP_BUFFER_SIZE),   // MAX_USBFS_BUFFER_SIZE

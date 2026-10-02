@@ -132,6 +132,18 @@ class Deployment(unittest.TestCase):
             HELPER.apply(self.root, plan)
         self.assertEqual(original, (self.root / 'frameworks/av/media/mtp/Android.bp').read_bytes())
 
+    def test_upgrade_writable_transport_only_changes_host_helper(self):
+        av = self.root / 'frameworks/av'
+        old = HELPER.PAYLOAD / 'frameworks-av-writable-v2.patch'
+        self.assertEqual(0, HELPER.git(av, 'apply', str(old)).returncode)
+        policy = self.root / 'system/sepolicy'
+        self.assertEqual(0, HELPER.git(policy, 'apply', str(HELPER.PAYLOAD / 'sepolicy.patch')).returncode)
+        plan = HELPER.plan(self.root)
+        self.assertEqual({'media/mtp/MtpDataPacket.cpp'}, set(plan[0][1]))
+        self.assertFalse(plan[1][2])
+        self.deploy()
+        self.assertFalse(any(item[2] for item in HELPER.plan(self.root)))
+
     def test_m4_write_exception_only_in_adapted_recovery(self):
         executable = shutil.which('m4')
         if not executable:
