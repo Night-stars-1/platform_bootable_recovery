@@ -456,7 +456,6 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   virtual void ShowFile(FILE*);
   virtual void PrintV(const char*, bool, va_list);
   void PutChar(char);
-  void ClearText();
 
   virtual void LoadAnimation();
   std::unique_ptr<GRSurface> LoadBitmap(const std::string& filename);
