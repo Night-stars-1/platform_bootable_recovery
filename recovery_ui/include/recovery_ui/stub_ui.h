@@ -58,6 +58,7 @@ class StubRecoveryUI : public RecoveryUI {
     va_end(ap);
   }
   void PrintOnScreenOnly(const char* /* fmt */, ...) override {}
+  void ClearText() override {}
   void ShowFile(const std::string& /* filename */) override {}
 
   // menu display

@@ -693,14 +693,23 @@ change_menu:
           return Device::REBOOT_RECOVERY;
         }
 
-        ui->Print("\nInstall completed with status %d.\n", status);
+        if (status == INSTALL_NONE) {
+          // Cancellation is a normal return to the menu. Keep the detail in the
+          // recovery log, but do not expose the transient text page or footer.
+          LOG(INFO) << "Installation cancelled or no package received.";
+          update_in_progress = false;
+          ui->ClearText();
+          ui->ShowText(true);
+        } else {
+          ui->Print("\nInstall completed with status %d.\n", status);
+        }
         if (status == INSTALL_SUCCESS) {
           update_in_progress = false;
           if (!ui->IsTextVisible()) {
             return Device::NO_ACTION;  // reboot if logs aren't visible
           }
         } else if (status == INSTALL_NONE) {
-          ui->Print("Installation cancelled or no package received.\n");
+          // The logo-only transition was redrawn above.
         } else {
           ui->SetBackground(RecoveryUI::ERROR);
           ui->Print("Installation aborted.\n");
