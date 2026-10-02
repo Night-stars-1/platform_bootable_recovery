@@ -12,15 +12,44 @@ diff --git a/private/property_contexts b/private/property_contexts
 diff --git a/private/recovery.te b/private/recovery.te
 --- a/private/recovery.te
 +++ b/private/recovery.te
-@@ -216,3 +216,11 @@
+@@ -1,3 +1,6 @@
++# BEGIN RECOVERY MTP GATE
++define(`recovery_mtp_only', `ifelse(target_recovery, `true', `ifelse(recovery_mtp, `true', `$1')')')
++# END RECOVERY MTP GATE
+ typeattribute recovery coredomain;
+ 
+ # The allow rules are only included in the recovery policy.
+@@ -209,10 +212,32 @@
+    -cache_file
     -cache_recovery_file
    with_native_coverage(`-method_trace_data_file')
+-}:file { no_w_file_perms no_x_file_perms };
++  recovery_mtp_only(`-media_rw_data_file')
++}:file no_w_file_perms;
++# Media files must never become executable, even on an adapted product.
+ neverallow recovery {
+    data_file_type
+    -cache_file
+    -cache_recovery_file
+   with_native_coverage(`-method_trace_data_file')
++}:file no_x_file_perms;
++neverallow recovery {
++   data_file_type
++   -cache_file
++   -cache_recovery_file
++  with_native_coverage(`-method_trace_data_file')
++  recovery_mtp_only(`-media_rw_data_file')
  }:dir no_w_dir_perms;
 +
-+# BEGIN RECOVERY MTP READONLY
++# BEGIN RECOVERY MTP
 +recovery_only(`
 +  get_prop(recovery, recovery_usb_config_prop)
-+  # Descriptor queries and endpoint mapping/allocation, not arbitrary ioctls.
 +  allowxperm recovery functionfs:file ioctl { FUNCTIONFS_ENDPOINT_DESC FUNCTIONFS_ENDPOINT_REVMAP FUNCTIONFS_ENDPOINT_ALLOC };
 +')
-+# END RECOVERY MTP READONLY
++recovery_mtp_only(`
++  # Only shared media; key, keystore and credential types retain their bans.
++  allow recovery media_rw_data_file:dir create_dir_perms;
++  allow recovery media_rw_data_file:file create_file_perms;
++  allowxperm recovery { userdata_block_device dm_device }:blk_file ioctl BLKROGET;
++')
++# END RECOVERY MTP

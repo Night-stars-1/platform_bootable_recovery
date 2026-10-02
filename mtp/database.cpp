@@ -14,9 +14,130 @@
 #include <cstdlib>
 #include <ctime>
 #include <memory>
+#include <sys/statvfs.h>
+#include <sys/syscall.h>
+#include <linux/fs.h>
+#include <cstdio>
 
 namespace recovery_mtp {
 using android::base::unique_fd;
+Database::~Database() { CancelUpload(); }
+void Database::EnableWrites(bool enable) {
+  struct statvfs fs{};
+  writable_ = enable && valid() && fstatvfs(root_.get(), &fs) == 0 && !(fs.f_flag & ST_RDONLY);
+}
+bool Database::ValidName(const std::string& name) const {
+  return !name.empty() && name.size() <= NAME_MAX && name != "." && name != ".." &&
+         !name.starts_with(".recovery-mtp-") &&
+         name.find_first_of("/\\:") == std::string::npos &&
+         std::none_of(name.begin(), name.end(), [](unsigned char c) { return c < 32 || c == 127; });
+}
+void Database::CancelUpload() {
+  if (upload_handle_ < entries_.size()) entries_[upload_handle_].alive = false;
+  upload_.reset(); upload_parent_.reset();
+  upload_handle_ = kInvalidObjectHandle;
+}
+MtpResponseCode Database::recoveryBeginUpload(const char* raw, MtpObjectFormat format,
+    MtpObjectHandle parent, MtpStorageID storage, uint64_t size, MtpObjectHandle* handle) {
+  if (!writable_) return MTP_RESPONSE_STORE_READ_ONLY;
+  if (!handle || storage != kStorageId) return MTP_RESPONSE_INVALID_STORAGE_ID;
+  if (parent == MTP_PARENT_ROOT) parent = 0;
+  if (!raw || !ValidName(raw)) return MTP_RESPONSE_INVALID_PARAMETER;
+  CancelUpload();
+  if (!Scan(parent)) return MTP_RESPONSE_INVALID_PARENT_OBJECT;
+  if (entries_.size() - 1 >= limit_) return MTP_RESPONSE_STORAGE_FULL;
+  auto directory = OpenEntry(parent);
+  if (directory.get() < 0) return MTP_RESPONSE_INVALID_PARENT_OBJECT;
+  struct statvfs available{};
+  if (fstatvfs(directory.get(), &available)) return MTP_RESPONSE_GENERAL_ERROR;
+  if (size != UINT32_MAX && size / std::max<uint64_t>(1, available.f_frsize) > available.f_bavail)
+    return MTP_RESPONSE_STORAGE_FULL;
+  struct stat collision{};
+  if (fstatat(directory.get(), raw, &collision, AT_SYMLINK_NOFOLLOW) == 0 || errno != ENOENT)
+    return MTP_RESPONSE_ACCESS_DENIED;
+  Entry entry;
+  entry.name = raw; entry.parent = parent;
+  entry.path = entries_[parent].path.empty() ? raw : entries_[parent].path + "/" + raw;
+  if (entry.path.size() >= PATH_MAX || std::count(entry.path.begin(), entry.path.end(), '/') >= 64)
+    return MTP_RESPONSE_INVALID_PARAMETER;
+  if (format == MTP_FORMAT_ASSOCIATION) {
+    if (mkdirat(directory.get(), raw, 0770)) return MTP_RESPONSE_ACCESS_DENIED;
+    unique_fd created(openat(directory.get(), raw, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+    if (created.get() < 0 || fstat(created.get(), &entry.stat)) return MTP_RESPONSE_GENERAL_ERROR;
+    if (fchmod(created.get(), 0770) || (geteuid() == 0 && fchown(created.get(), 1023, 1023))) {
+      unlinkat(directory.get(), raw, AT_REMOVEDIR);
+      return MTP_RESPONSE_GENERAL_ERROR;
+    }
+    entries_.push_back(std::move(entry));
+    *handle = entries_.size() - 1;
+    return fsync(directory.get()) == 0 ? MTP_RESPONSE_OK : MTP_RESPONSE_GENERAL_ERROR;
+  }
+  // An unnamed inode cannot appear as a half-written ZIP, even if init kills
+  // the daemon mid-transfer. Publishing with linkat also refuses overwrites.
+  upload_.reset(openat(directory.get(), ".", O_TMPFILE | O_RDWR | O_CLOEXEC, 0660));
+  if (upload_.get() < 0) return errno == ENOSPC ? MTP_RESPONSE_STORAGE_FULL :
+      errno == EROFS ? MTP_RESPONSE_STORE_READ_ONLY : MTP_RESPONSE_ACCESS_DENIED;
+  if (fstat(upload_.get(), &entry.stat) || fchmod(upload_.get(), 0660) ||
+      (geteuid() == 0 && fchown(upload_.get(), 1023, 1023))) {
+    CancelUpload(); return MTP_RESPONSE_GENERAL_ERROR;
+  }
+  entry.pending = true;
+  entries_.push_back(std::move(entry));
+  upload_handle_ = entries_.size() - 1; upload_size_ = size;
+  upload_parent_ = std::move(directory);
+  *handle = upload_handle_;
+  return MTP_RESPONSE_OK;
+}
+int Database::recoveryUploadFd(MtpObjectHandle handle) {
+  return writable_ && handle == upload_handle_ && upload_.get() >= 0
+      ? fcntl(upload_.get(), F_DUPFD_CLOEXEC, 0) : -1;
+}
+MtpResponseCode Database::recoveryFinishUpload(MtpObjectHandle handle, bool success) {
+  if (handle != upload_handle_ || upload_.get() < 0) return MTP_RESPONSE_NO_VALID_OBJECT_INFO;
+  auto result = MTP_RESPONSE_GENERAL_ERROR;
+  struct stat st{};
+  if (success && fstat(upload_.get(), &st) == 0 && st.st_size >= 0 &&
+      (upload_size_ == UINT32_MAX || uint64_t(st.st_size) == upload_size_) && fsync(upload_.get()) == 0) {
+    // procfd refers to our pinned unnamed inode; never to a host-supplied path.
+    const auto proc = "/proc/self/fd/" + std::to_string(upload_.get());
+    auto parent = OpenEntry(entries_[handle].parent);
+    struct stat before{}, now{};
+    if (parent.get() >= 0 && fstat(parent.get(), &now) == 0 &&
+        fstat(upload_parent_.get(), &before) == 0 && now.st_dev == before.st_dev && now.st_ino == before.st_ino &&
+        linkat(AT_FDCWD, proc.c_str(), parent.get(), entries_[handle].name.c_str(), AT_SYMLINK_FOLLOW) == 0) {
+      entries_[handle].stat = st; entries_[handle].pending = false;
+      result = fsync(parent.get()) == 0 ? MTP_RESPONSE_OK : MTP_RESPONSE_GENERAL_ERROR;
+      // Keep the committed entry visible even on a directory flush failure.
+      upload_handle_ = kInvalidObjectHandle;
+    }
+  }
+  CancelUpload();
+  return result;
+}
+bool Database::DeleteEntry(MtpObjectHandle handle) {
+  const auto* entry = Get(handle);
+  if (!entry) return false;
+  if (S_ISDIR(entry->stat.st_mode)) {
+    if (!Scan(handle)) return false;
+    for (size_t i = 1; i < entries_.size(); ++i)
+      if (entries_[i].alive && entries_[i].parent == handle && !DeleteEntry(i)) return false;
+  }
+  entry = Get(handle);  // Scan may have grown the vector.
+  auto pinned = OpenEntry(handle), parent = OpenEntry(entry->parent);
+  if (pinned.get() < 0 || parent.get() < 0) return false;
+  struct stat st{};
+  if (fstatat(parent.get(), entry->name.c_str(), &st, AT_SYMLINK_NOFOLLOW) ||
+      st.st_ino != entry->stat.st_ino || st.st_dev != entry->stat.st_dev) return false;
+  if (unlinkat(parent.get(), entry->name.c_str(), S_ISDIR(st.st_mode) ? AT_REMOVEDIR : 0)) return false;
+  entries_[handle].alive = false;
+  return fsync(parent.get()) == 0;
+}
+MtpResponseCode Database::recoveryDelete(MtpObjectHandle handle) {
+  if (!writable_) return MTP_RESPONSE_STORE_READ_ONLY;
+  if (!Get(handle)) return MTP_RESPONSE_INVALID_OBJECT_HANDLE;
+  if (upload_handle_ != kInvalidObjectHandle) return MTP_RESPONSE_DEVICE_BUSY;
+  return DeleteEntry(handle) ? MTP_RESPONSE_OK : MTP_RESPONSE_PARTIAL_DELETION;
+}
 static const MtpObjectProperty kProperties[] = {
   MTP_PROPERTY_STORAGE_ID, MTP_PROPERTY_OBJECT_FORMAT, MTP_PROPERTY_PROTECTION_STATUS,
   MTP_PROPERTY_OBJECT_SIZE, MTP_PROPERTY_OBJECT_FILE_NAME, MTP_PROPERTY_DATE_MODIFIED,
@@ -61,10 +182,11 @@ unique_fd Database::Open(const std::string& path) const {
   return fd;
 }
 const Database::Entry* Database::Get(MtpObjectHandle handle) const {
-  return valid() && handle > 0 && handle < entries_.size() ? &entries_[handle] : nullptr;
+  return valid() && handle > 0 && handle < entries_.size() && entries_[handle].alive &&
+         !entries_[handle].pending ? &entries_[handle] : nullptr;
 }
 unique_fd Database::OpenEntry(MtpObjectHandle handle) const {
-  if (!valid() || handle >= entries_.size()) return {};
+  if (!valid() || handle >= entries_.size() || !entries_[handle].alive || entries_[handle].pending) return {};
   const auto& entry = entries_[handle];
   auto fd = Open(entry.path);
   struct stat st{};
@@ -89,7 +211,7 @@ bool Database::Scan(MtpObjectHandle parent) {
     auto item = readdir(raw);
     if (!item) { if (errno) return false; break; }
     std::string name(item->d_name);
-    if (name == "." || name == "..") continue;
+    if (name == "." || name == ".." || name.starts_with(".recovery-mtp-")) continue;
     Entry entry;
     if (fstatat(dirfd(raw), name.c_str(), &entry.stat, AT_SYMLINK_NOFOLLOW) != 0 ||
         entry.stat.st_dev != entries_[0].stat.st_dev || entry.stat.st_size < 0 ||
@@ -109,7 +231,7 @@ bool Database::Scan(MtpObjectHandle parent) {
 }
 bool Database::ScanAll() {
   for (size_t i = 0; i < entries_.size(); ++i)
-    if (S_ISDIR(entries_[i].stat.st_mode) && !Scan(i)) return false;
+    if (entries_[i].alive && !entries_[i].pending && S_ISDIR(entries_[i].stat.st_mode) && !Scan(i)) return false;
   return true;
 }
 MtpObjectFormat Database::Format(const Entry& entry) const {
@@ -122,7 +244,7 @@ MtpObjectHandleList* Database::getObjectList(MtpStorageID storage, MtpObjectForm
   if (all ? !ScanAll() : !Scan(parent)) return nullptr;
   auto result = std::make_unique<MtpObjectHandleList>();
   for (size_t i = 1; i < entries_.size(); ++i)
-    if ((all || entries_[i].parent == parent) && (!format || Format(entries_[i]) == format))
+    if (entries_[i].alive && !entries_[i].pending && (all || entries_[i].parent == parent) && (!format || Format(entries_[i]) == format))
       result->push_back(i);
   return result.release();
 }
@@ -131,7 +253,7 @@ int Database::getNumObjects(MtpStorageID storage, MtpObjectFormat format, MtpObj
   return list ? static_cast<int>(list->size()) : -1;
 }
 MtpObjectFormatList* Database::getSupportedPlaybackFormats() { return new MtpObjectFormatList{MTP_FORMAT_UNDEFINED, MTP_FORMAT_ASSOCIATION}; }
-MtpObjectFormatList* Database::getSupportedCaptureFormats() { return new MtpObjectFormatList; }
+MtpObjectFormatList* Database::getSupportedCaptureFormats() { return writable_ ? new MtpObjectFormatList{MTP_FORMAT_UNDEFINED, MTP_FORMAT_ASSOCIATION} : new MtpObjectFormatList; }
 MtpObjectPropertyList* Database::getSupportedObjectProperties(MtpObjectFormat) { return new MtpObjectPropertyList(std::begin(kProperties), std::end(kProperties)); }
 MtpDevicePropertyList* Database::getSupportedDeviceProperties() { return new MtpDevicePropertyList{MTP_DEVICE_PROPERTY_DEVICE_FRIENDLY_NAME}; }
 MtpDataType Database::PropertyType(MtpObjectProperty property) const {
@@ -153,7 +275,7 @@ MtpResponseCode Database::getObjectPropertyValue(MtpObjectHandle handle, MtpObje
     case MTP_PROPERTY_STORAGE_ID: packet.putUInt32(kStorageId); break;
     case MTP_PROPERTY_PARENT_OBJECT: packet.putUInt32(entry->parent); break;
     case MTP_PROPERTY_OBJECT_FORMAT: packet.putUInt16(Format(*entry)); break;
-    case MTP_PROPERTY_PROTECTION_STATUS: packet.putUInt16(1); break;
+    case MTP_PROPERTY_PROTECTION_STATUS: packet.putUInt16(writable_ ? 0 : 1); break;
     case MTP_PROPERTY_OBJECT_SIZE: packet.putUInt64(S_ISDIR(st.st_mode) ? 0 : st.st_size); break;
     case MTP_PROPERTY_PERSISTENT_UID: {
       uint128_t uid = {handle, kStorageId, 0, 0};
@@ -169,7 +291,35 @@ MtpResponseCode Database::getObjectPropertyValue(MtpObjectHandle handle, MtpObje
   }
   return MTP_RESPONSE_OK;
 }
-MtpResponseCode Database::setObjectPropertyValue(MtpObjectHandle, MtpObjectProperty, MtpDataPacket&) { return MTP_RESPONSE_STORE_READ_ONLY; }
+MtpResponseCode Database::setObjectPropertyValue(MtpObjectHandle handle, MtpObjectProperty property, MtpDataPacket& packet) {
+  if (!writable_) return MTP_RESPONSE_STORE_READ_ONLY;
+  if (property != MTP_PROPERTY_OBJECT_FILE_NAME) return MTP_RESPONSE_OBJECT_PROP_NOT_SUPPORTED;
+  auto* entry = Get(handle);
+  if (!entry) return MTP_RESPONSE_INVALID_OBJECT_HANDLE;
+  MtpStringBuffer buffer;
+  if (!packet.getString(buffer)) return MTP_RESPONSE_INVALID_OBJECT_PROP_VALUE;
+  const std::string name(static_cast<const char*>(buffer));
+  if (!ValidName(name)) return MTP_RESPONSE_INVALID_OBJECT_PROP_VALUE;
+  if (upload_handle_ != kInvalidObjectHandle) return MTP_RESPONSE_DEVICE_BUSY;
+  auto fd = OpenEntry(handle), parent = OpenEntry(entry->parent);
+  if (fd.get() < 0 || parent.get() < 0) return MTP_RESPONSE_INVALID_OBJECT_HANDLE;
+  if (name == entry->name) return MTP_RESPONSE_OK;
+  const auto old = entry->path;
+  const auto prefix = entries_[entry->parent].path;
+  const auto path = prefix.empty() ? name : prefix + "/" + name;
+  // Check every descendant before an atomic, no-overwrite directory rename.
+  for (const auto& child : entries_) if (child.alive &&
+      (child.path == old || child.path.starts_with(old + "/")) &&
+      path.size() + child.path.size() - old.size() >= PATH_MAX)
+    return MTP_RESPONSE_INVALID_OBJECT_PROP_VALUE;
+  if (syscall(SYS_renameat2, parent.get(), entry->name.c_str(), parent.get(), name.c_str(),
+              RENAME_NOREPLACE) != 0) return MTP_RESPONSE_ACCESS_DENIED;
+  entries_[handle].name = name;
+  for (auto& child : entries_) if (child.alive &&
+      (child.path == old || child.path.starts_with(old + "/")))
+    child.path = path + child.path.substr(old.size());
+  return fsync(parent.get()) == 0 ? MTP_RESPONSE_OK : MTP_RESPONSE_GENERAL_ERROR;
+}
 MtpResponseCode Database::getDevicePropertyValue(MtpDeviceProperty property, MtpDataPacket& packet) {
   if (property != MTP_DEVICE_PROPERTY_DEVICE_FRIENDLY_NAME) return MTP_RESPONSE_DEVICE_PROP_NOT_SUPPORTED;
   packet.putString("Recovery"); return MTP_RESPONSE_OK;
@@ -222,7 +372,7 @@ MtpResponseCode Database::getObjectInfo(MtpObjectHandle handle, MtpObjectInfo& i
   auto fd = OpenEntry(handle);
   struct stat st{};
   if (!entry || fd.get() < 0 || fstat(fd.get(), &st) != 0) return MTP_RESPONSE_INVALID_OBJECT_HANDLE;
-  info.mStorageID = kStorageId; info.mFormat = Format(*entry); info.mProtectionStatus = 1;
+  info.mStorageID = kStorageId; info.mFormat = Format(*entry); info.mProtectionStatus = writable_ ? 0 : 1;
   info.mCompressedSize = S_ISDIR(st.st_mode) ? 0 : std::min<uint64_t>(st.st_size, UINT32_MAX);
   info.mParent = entry->parent; info.mAssociationType = S_ISDIR(st.st_mode) ? 1 : 0;
   info.mDateCreated = st.st_mtime; info.mDateModified = st.st_mtime;
@@ -248,7 +398,7 @@ int Database::openFilePath(const char* path, bool transcode) {
 MtpObjectHandleList* Database::getObjectReferences(MtpObjectHandle handle) { return Get(handle) ? new MtpObjectHandleList : nullptr; }
 MtpProperty* Database::getObjectPropertyDesc(MtpObjectProperty property, MtpObjectFormat) {
   auto type = PropertyType(property);
-  return type ? new MtpProperty(property, type, false) : nullptr;
+  return type ? new MtpProperty(property, type, writable_ && property == MTP_PROPERTY_OBJECT_FILE_NAME) : nullptr;
 }
 MtpProperty* Database::getDevicePropertyDesc(MtpDeviceProperty property) {
   if (property != MTP_DEVICE_PROPERTY_DEVICE_FRIENDLY_NAME) return nullptr;

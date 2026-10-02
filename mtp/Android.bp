@@ -34,7 +34,7 @@ cc_binary {
         default: [],
     }),
     shared_libs: ["libbase", "liblog", "libasyncio"],
-    cflags: ["-Wall", "-Wextra", "-Werror"],
+    cflags: ["-Wall", "-Wextra", "-Werror", "-DRECOVERY_MTP"],
     init_rc: ["recovery-mtp.rc"],
 }
 // Normal Android test variant: gtest has no Recovery variant in this tree.
@@ -45,6 +45,6 @@ cc_test {
     srcs: ["tests/database_test.cpp", "database.cpp"],
     local_include_dirs: ["."],
     shared_libs: ["libbase", "libmtp"],
-    cflags: ["-Wall", "-Wextra", "-Werror"],
+    cflags: ["-Wall", "-Wextra", "-Werror", "-DRECOVERY_MTP"],
     test_suites: ["device-tests"],
 }

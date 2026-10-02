@@ -57,7 +57,12 @@ static int32_t Ce(uint32_t user, uint32_t type, const uint8_t* credential, size_
   Diagnostic(result, Checkpoint::SpUnlock);
   if (result != RC_OK) return result;
   result = session->storage.LoadCe(session->hal, user, secret);
-  if (result == RC_OK) session->stage = 5;
+  if (result == RC_OK) {
+    session->stage = 5;
+    // Optional export permission is separate from authentication success.
+    // Remount failures retain the decrypted read-only browser/download path.
+    session->storage.EnableMediaWrites(user);
+  }
   return Diagnostic(result, Checkpoint::CeLoad);
 }
 static void Finish() {

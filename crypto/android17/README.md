@@ -360,3 +360,12 @@ Primary design references:
 - https://source.android.com/docs/security/features/encryption/metadata
 - https://source.android.com/docs/security/features/encryption/hw-wrapped-keys
 - Pinned platform sources listed in `source-review.json`.
+
+## Optional writable media export
+
+A Recovery MTP `VID:PID:rw` profile changes the mount lifecycle; see
+[the MTP guide](../../mtp/README.md). The default without this trusted profile
+remains read-only. With the opt-in, userdata journal/roll-forward recovery is
+allowed at its initial ro mount; only after CE key recovery succeeds is an rw
+remount attempted. Keys and lock settings remain protected by their read-only
+access rules. This path requires device filesystem and SELinux validation.

@@ -2,6 +2,8 @@
 // Existing-key-only adaptation of AOSP vold MetadataCrypt/FsCrypt/KeyUtil.
 // Copyright (C) 2016 The Android Open Source Project
 #include "storage.h"
+#include <recovery_crypto/media_access.h>
+#include <android-base/logging.h>
 #include <android-base/properties.h>
 #include <android-base/strings.h>
 #include <fcntl.h>
@@ -66,7 +68,7 @@ static bool ValidMountedFilesystem(const std::string& path, const std::string& t
          ((type == "ext4" && s.f_type == 0xef53) ||
           (type == "f2fs" && s.f_type == static_cast<decltype(s.f_type)>(0xf2f52010)));
 }
-static int ReadOnlyMount(const android::fs_mgr::FstabEntry& entry, const std::string& device) {
+static int ReadOnlyMount(const android::fs_mgr::FstabEntry& entry, const std::string& device, bool media_writes = false) {
   auto fd = OpenDirectory(entry.mount_point);
   if (fd.get() < 0) return RC_IO_ERROR;
   std::string source;
@@ -83,14 +85,18 @@ static int ReadOnlyMount(const android::fs_mgr::FstabEntry& entry, const std::st
     if (!options.empty()) options += ",";
     options += option;
   }
-  options += entry.fs_type == "ext4" ? ",noload" : ",norecovery";
-  if (options.front() == ',') options.erase(0, 1);
+  // Opt-in writable media needs normal journal/roll-forward recovery before
+  // later remounting rw. The filesystem may replay its journal at this ro mount;
+  // no userspace key/credential writes or fsck are performed.
+  if (!media_writes) options += entry.fs_type == "ext4" ? ",noload" : ",norecovery";
+  if (!options.empty() && options.front() == ',') options.erase(0, 1);
   if (mount(device.c_str(), entry.mount_point.c_str(), entry.fs_type.c_str(), flags,
             options.c_str()) != 0)
     return RC_IO_ERROR;
   return ValidMountedFilesystem(entry.mount_point, entry.fs_type) ? RC_OK : RC_IO_ERROR;
 }
 int Storage::Configure(const Config& c) {
+  media_writes_ = recovery_crypto::MediaWritesRequested();
   if (!android::fs_mgr::ReadFstabFromFile(c.fstab, &fstab_)) return RC_UNSUPPORTED;
   const auto* data = android::fs_mgr::GetEntryForMountPoint(&fstab_, "/data");
   const auto* metadata = android::fs_mgr::GetEntryForMountPoint(&fstab_, "/metadata");
@@ -187,7 +193,7 @@ int Storage::Mount(Hal& hal) {
     data_device_ = source;
     return RC_OK;
   }
-  if (!metadata_encrypted_) return ReadOnlyMount(data_, data_.blk_device);
+  if (!metadata_encrypted_) return ReadOnlyMount(data_, data_.blk_device, media_writes_);
   // An already-mounted metadata partition may be writable; read no state through any other device.
   if (Mounted("/metadata", &source, &ro)) {
     if (!SameDevice(source, metadata_.blk_device) || !ValidMountedFilesystem("/metadata", "ext4"))
@@ -246,7 +252,7 @@ int Storage::Mount(Hal& hal) {
   auto* io = static_cast<dm_ioctl*>(request.data());
   init(io, size);
   io->target_count = 1;
-  io->flags = DM_READONLY_FLAG | DM_SECURE_DATA_FLAG;
+  io->flags = (media_writes_ ? 0 : DM_READONLY_FLAG) | DM_SECURE_DATA_FLAG;
   auto* target =
       reinterpret_cast<dm_target_spec*>(reinterpret_cast<uint8_t*>(io) + sizeof(dm_ioctl));
   target->length = (bytes / 512) & ~uint64_t{ 7 };
@@ -263,7 +269,7 @@ int Storage::Mount(Hal& hal) {
     dm.DeleteDevice(name);
     return RC_IO_ERROR;
   }
-  result = ReadOnlyMount(data_, data_device_);
+  result = ReadOnlyMount(data_, data_device_, media_writes_);
   if (result != RC_OK) dm.DeleteDevice(name);
   return result;
 }
@@ -362,5 +368,27 @@ int Storage::LoadCe(Hal& hal, uint32_t user, View secret) {
     if (result == RC_KEY_UPGRADE_REQUIRED || result == RC_UNSUPPORTED) return result;
   }
   return attempted ? RC_IO_ERROR : Diagnostic(RC_EXISTING_KEY_MISSING, Checkpoint::CeKeyDirectories);
+}
+void Storage::EnableMediaWrites(uint32_t user) {
+  if (!media_writes_ || user != 0) return;
+  // Called only after existing CE key installation and kernel status checks.
+  // MTP never triggers authentication or a remount from a host command.
+  std::string source;
+  bool ro = false;
+  if (!Mounted("/data", &source, &ro) || !SameDevice(source, data_device_) ||
+      !ValidMountedFilesystem("/data", data_.fs_type)) return;
+  unique_fd block(open(source.c_str(), O_RDONLY | O_CLOEXEC));
+  int readonly = 1;
+  if (block.get() < 0 || ioctl(block.get(), BLKROGET, &readonly) || readonly) return;
+  std::string options;
+  for (const auto& option : android::base::Split(data_.fs_options, ",")) {
+    if (option.empty() || option == "ro" || option == "noload" || option == "norecovery" ||
+        option == "disable_roll_forward" || option == "discard" || option.starts_with("discard=")) continue;
+    if (!options.empty()) options += ",";
+    options += option;
+  }
+  const auto flags = (data_.flags & ~MS_RDONLY) | MS_REMOUNT | MS_NOATIME | MS_NOSUID | MS_NODEV | MS_NOEXEC;
+  if (ro && mount(source.c_str(), "/data", data_.fs_type.c_str(), flags, options.c_str()))
+    LOG(WARNING) << "Recovery media remount refused; MTP remains read-only";
 }
 }  // namespace recovery_crypto::android17

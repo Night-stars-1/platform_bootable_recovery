@@ -126,3 +126,84 @@ TEST(RecoveryMtp, RootPropertyListsPreserveShallowEnumeration) {
   EXPECT_EQ(3u, count(0, -1));
   EXPECT_EQ(3u, count(UINT32_MAX, 0));
 }
+TEST(RecoveryMtp, UploadPublishesOnlyCompleteInodeAndRefusesOverwrite) {
+  TemporaryDir temp;
+  const std::string root(temp.path);
+  Database db(root);
+  db.EnableWrites(true);
+  ASSERT_TRUE(db.recoveryStorageWritable());
+  MtpObjectHandle handle = kInvalidObjectHandle;
+  ASSERT_EQ(MTP_RESPONSE_OK, db.recoveryBeginUpload("更新.zip", MTP_FORMAT_UNDEFINED, 0, kStorageId, 3, &handle));
+  EXPECT_NE(0, access((root + "/更新.zip").c_str(), F_OK));
+  android::base::unique_fd fd(db.recoveryUploadFd(handle));
+  ASSERT_GE(fd.get(), 0);
+  ASSERT_TRUE(android::base::WriteStringToFd("zip", fd.get()));
+  ASSERT_EQ(MTP_RESPONSE_OK, db.recoveryFinishUpload(handle, true));
+  std::string value;
+  ASSERT_TRUE(android::base::ReadFileToString(root + "/更新.zip", &value));
+  EXPECT_EQ("zip", value);
+  EXPECT_EQ(MTP_RESPONSE_ACCESS_DENIED, db.recoveryBeginUpload("更新.zip", MTP_FORMAT_UNDEFINED, 0, kStorageId, 0, &handle));
+  MtpStringBuffer path; int64_t length; MtpObjectFormat format;
+  EXPECT_EQ(MTP_RESPONSE_OK, db.getObjectFilePath(handle, path, length, format));
+  EXPECT_EQ(3, length);
+}
+TEST(RecoveryMtp, CancelShortUploadAndTraversalLeaveNoPublishedFile) {
+  TemporaryDir temp;
+  const std::string root(temp.path);
+  Database db(root);
+  db.EnableWrites(true);
+  for (bool success : {false, true}) {
+    MtpObjectHandle handle = kInvalidObjectHandle;
+    ASSERT_EQ(MTP_RESPONSE_OK, db.recoveryBeginUpload("rom.zip", MTP_FORMAT_UNDEFINED, 0, kStorageId, 100, &handle));
+    android::base::unique_fd fd(db.recoveryUploadFd(handle));
+    ASSERT_TRUE(android::base::WriteStringToFd("short", fd.get()));
+    EXPECT_NE(MTP_RESPONSE_OK, db.recoveryFinishUpload(handle, success));
+    EXPECT_NE(0, access((root + "/rom.zip").c_str(), F_OK));
+  }
+  MtpObjectHandle handle = kInvalidObjectHandle;
+  for (const char* name : {"../key", "folder/file", ".", "..", "dir\\file"})
+    EXPECT_EQ(MTP_RESPONSE_INVALID_PARAMETER, db.recoveryBeginUpload(name, MTP_FORMAT_UNDEFINED, 0, kStorageId, 0, &handle));
+  ASSERT_EQ(0, symlink("/data/misc/vold", (root + "/escape").c_str()));
+  EXPECT_EQ(MTP_RESPONSE_ACCESS_DENIED, db.recoveryBeginUpload("escape", MTP_FORMAT_UNDEFINED, 0, kStorageId, 0, &handle));
+}
+TEST(RecoveryMtp, RenameDirectoryKeepsHandlesAndDeleteIsRecursive) {
+  TemporaryDir temp;
+  const std::string root(temp.path);
+  Database db(root);
+  db.EnableWrites(true);
+  MtpObjectHandle parent, child;
+  ASSERT_EQ(MTP_RESPONSE_OK, db.recoveryBeginUpload("folder", MTP_FORMAT_ASSOCIATION, 0, kStorageId, 0, &parent));
+  ASSERT_EQ(MTP_RESPONSE_OK, db.recoveryBeginUpload("child", MTP_FORMAT_UNDEFINED, parent, kStorageId, 0, &child));
+  ASSERT_EQ(MTP_RESPONSE_OK, db.recoveryFinishUpload(child, true));
+  MtpDataPacket encoded, input;
+  encoded.putString("renamed"); input.copyFrom(encoded);
+  ASSERT_EQ(MTP_RESPONSE_OK, db.setObjectPropertyValue(parent, MTP_PROPERTY_OBJECT_FILE_NAME, input));
+  MtpStringBuffer path; int64_t length; MtpObjectFormat format;
+  EXPECT_EQ(MTP_RESPONSE_OK, db.getObjectFilePath(child, path, length, format));
+  EXPECT_EQ(0, access((root + "/renamed/child").c_str(), F_OK));
+  ASSERT_EQ(MTP_RESPONSE_OK, db.recoveryDelete(parent));
+  EXPECT_NE(0, access((root + "/renamed").c_str(), F_OK));
+  EXPECT_EQ(MTP_RESPONSE_INVALID_OBJECT_HANDLE, db.getObjectFilePath(child, path, length, format));
+  std::unique_ptr<MtpObjectHandleList> remaining(db.getObjectList(kStorageId, 0, 0));
+  ASSERT_NE(nullptr, remaining);
+  EXPECT_TRUE(remaining->empty());
+}
+TEST(RecoveryMtp, ReadonlyProfileAndReplacedInodesCannotMutate) {
+  TemporaryDir temp;
+  const std::string root(temp.path);
+  ASSERT_TRUE(android::base::WriteStringToFile("old", root + "/file"));
+  Database db(root);
+  std::unique_ptr<MtpObjectHandleList> objects(db.getObjectList(kStorageId, 0, MTP_PARENT_ROOT));
+  ASSERT_NE(nullptr, objects);
+  ASSERT_EQ(1u, objects->size());
+  MtpObjectHandle handle = objects->at(0), uploaded;
+  EXPECT_EQ(MTP_RESPONSE_STORE_READ_ONLY, db.recoveryBeginUpload("new", MTP_FORMAT_UNDEFINED, 0, kStorageId, 0, &uploaded));
+  EXPECT_EQ(MTP_RESPONSE_STORE_READ_ONLY, db.recoveryDelete(handle));
+  db.EnableWrites(true);
+  ASSERT_EQ(0, rename((root + "/file").c_str(), (root + "/old").c_str()));
+  ASSERT_TRUE(android::base::WriteStringToFile("replacement", root + "/file"));
+  EXPECT_EQ(MTP_RESPONSE_PARTIAL_DELETION, db.recoveryDelete(handle));
+  std::string content;
+  ASSERT_TRUE(android::base::ReadFileToString(root + "/file", &content));
+  EXPECT_EQ("replacement", content);
+}

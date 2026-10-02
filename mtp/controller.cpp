@@ -4,6 +4,7 @@
 #include <android-base/properties.h>
 #include <android-base/unique_fd.h>
 #include <recovery_crypto/session.h>
+#include <recovery_crypto/media_access.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -27,23 +28,15 @@ bool Enabled(std::string* configured_pid = nullptr) {
   if (lstat("/system/bin/recovery_mtp", &st) != 0 || !S_ISREG(st.st_mode) ||
       st.st_uid != 0 || (st.st_mode & 0022) != 0 || (st.st_mode & 0100) == 0 ||
       GetProperty("sys.usb.configfs", "") != "1") return false;
-  android::base::unique_fd config(open("/system/etc/recovery.mtp.conf", O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
-  if (config.get() < 0 || fstat(config.get(), &st) != 0 || !S_ISREG(st.st_mode) ||
-      st.st_uid != 0 || (st.st_mode & 0022) != 0 || st.st_size < 9 || st.st_size > 10) return false;
-  char bytes[11];
-  const auto count = TEMP_FAILURE_RETRY(read(config.get(), bytes, sizeof(bytes)));
-  if (count < 9 || count > 10) return false;
-  std::string text(bytes, count);
-  if (!text.empty() && text.back() == '\n') text.pop_back();
-  if (text.size() != 9 || text[4] != ':' ||
-      text.substr(0, 4).find_first_not_of("0123456789abcdefABCDEF") != std::string::npos ||
-      text.substr(5).find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) return false;
-  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) { return std::toupper(ch); });
+  std::string configured_vid, pid;
+  if (!recovery_crypto::ReadMediaAccess(&configured_vid, &pid)) return false;
+  std::transform(configured_vid.begin(), configured_vid.end(), configured_vid.begin(), [](unsigned char ch) { return std::toupper(ch); });
+  std::transform(pid.begin(), pid.end(), pid.begin(), [](unsigned char ch) { return std::toupper(ch); });
   auto vid = GetProperty("ro.recovery.usb.vid", "");
   std::transform(vid.begin(), vid.end(), vid.begin(), [](unsigned char ch) { return std::toupper(ch); });
   if (vid.substr(0, 2) == "0X") vid.erase(0, 2);
-  if (text.substr(0, 4) != vid) return false;
-  if (configured_pid) *configured_pid = text.substr(5);
+  if (configured_vid != vid) return false;
+  if (configured_pid) *configured_pid = pid;
   return true;
 }
 }  // namespace
@@ -64,7 +57,7 @@ bool Start() {
       WaitForProperty("sys.usb.config.recovery_mtp.prepared", "1", 3s) &&
       Config("none") && Config("mtp,adb") &&
       GetProperty("init.svc.recovery-mtp", "") == "running") {
-    LOG(INFO) << "Recovery MTP: unlocked media shared read-only; ADB retained";
+    LOG(INFO) << "Recovery MTP: unlocked media shared; ADB retained";
     return true;
   }
   LOG(WARNING) << "Recovery MTP unavailable; restoring ADB";
@@ -86,6 +79,11 @@ bool Stop() {
         !WaitForProperty("init.svc.recovery-mtp", "stopped", 6s)) return false;
   } else if (restore_adb && !Config("none")) {
     return false;
+  }
+  // The daemon is stopped before flushing. A partial upload is never published.
+  if (recovery_crypto::VerifyUserStorage(0)) {
+    android::base::unique_fd media(open("/data/media/0", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+    if (media.get() < 0 || syncfs(media.get()) != 0) return false;
   }
   if (restore_adb && !Config("adb")) return false;
   attempted = false;
