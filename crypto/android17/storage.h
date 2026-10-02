@@ -13,6 +13,7 @@ class Storage final {
   int Mount(Hal& hal);
   int LoadDe(Hal& hal, uint32_t user);
   int LoadCe(Hal& hal, uint32_t user, View secret);
+  void EnableMediaWrites(uint32_t user);
 
  private:
   int PrepareKey(Hal& hal, View persistent, KeyMode mode, Bytes* ephemeral);
@@ -22,6 +23,6 @@ class Storage final {
   unsigned policy_version_ = 0;
   KeyMode mode_ = KeyMode::Raw, metadata_mode_ = KeyMode::Raw;
   std::string metadata_cipher_, data_device_;
-  bool metadata_encrypted_ = false;
+  bool metadata_encrypted_ = false, media_writes_ = false;
 };
 }  // namespace recovery_crypto::android17
