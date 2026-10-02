@@ -1093,6 +1093,7 @@ Device::BuiltinAction start_recovery(Device* device, const std::vector<std::stri
     ui->ShowText(true);
     status = INSTALL_NONE;  // No command specified
     ui->SetBackground(RecoveryUI::NO_COMMAND);
+
   }
 
   if (status == INSTALL_ERROR || status == INSTALL_CORRUPT) {
