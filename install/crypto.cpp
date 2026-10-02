@@ -8,7 +8,6 @@
 #include "recovery_crypto/session.h"
 
 #include <android-base/strings.h>
-#include <android-base/scopeguard.h>
 #include <algorithm>
 #include <dirent.h>
 #include <fcntl.h>
@@ -95,16 +94,8 @@ bool ReadCredential(Device* device, uint32_t type, uint32_t pattern_size, Creden
 bool UnlockStorage(Device* device) {
   recovery_crypto::Session session;
   auto ui = device->GetUI();
-  ui->SetStatusMessage("Unlock internal storage", "Unlocking internal storage");
-  const auto clear_status = android::base::make_scope_guard([ui] {
-    ui->SetStatusMessage("", "");
-  });
   ui->SetInstallStage(RecoveryUI::InstallStage::NONE);
-  const auto progress = [ui](Stage stage) {
-    const auto message = recovery_crypto::StageMessage(stage);
-    ui->SetStatusMessage("Unlock internal storage", message);
-    ui->Print("%s\n", message);
-  };
+  const auto progress = [ui](Stage stage) { ui->Print("%s\n", recovery_crypto::StageMessage(stage)); };
   auto result = session.Prepare(kUser, progress);
   if (result.status == Status::Ready) return true;
   if (result.status != Status::CredentialRequired) { ShowError(device, result); return false; }
