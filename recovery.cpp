@@ -48,6 +48,7 @@
 #include "bootloader_message/bootloader_message.h"
 #include "install/adb_install.h"
 #include "install/crypto.h"
+#include "recovery_mtp/controller.h"
 #include "install/fuse_install.h"
 #include "install/virtiofs_install.h"
 #include "install/install.h"
@@ -563,6 +564,7 @@ static Device::BuiltinAction PromptAndWait(Device* device, InstallResult status)
     ui->SetProgressType(RecoveryUI::EMPTY);
 
 change_menu:
+    recovery_mtp::Start();
     size_t chosen_item = ui->ShowMenu(
         device->GetMenuHeaders(), device->GetMenuItems(), 0, false,
         std::bind(&Device::HandleMenuKey, device, std::placeholders::_1, std::placeholders::_2));
@@ -583,6 +585,13 @@ change_menu:
         (chosen_item == static_cast<size_t>(RecoveryUI::KeyError::TIMED_OUT))
             ? Device::REBOOT
             : device->InvokeMenuItem(chosen_item);
+
+    if (chosen_action != Device::NO_ACTION && chosen_action != Device::MENU_BASE &&
+        chosen_action != Device::MENU_WIPE && chosen_action != Device::MENU_ADVANCED &&
+        !recovery_mtp::Stop()) {
+      ui->Print("Could not stop USB file transfer. Please retry.\n");
+      continue;
+    }
 
     switch (chosen_action) {
       case Device::MENU_BASE:
@@ -1163,6 +1172,7 @@ Device::BuiltinAction start_recovery(Device* device, const std::vector<std::stri
   // Save logs and clean up before rebooting or shutting down.
   FinishRecovery(ui);
 
+  recovery_mtp::Stop();
   volmgr->unmountAll();
   volmgr->stop();
   delete volclient;

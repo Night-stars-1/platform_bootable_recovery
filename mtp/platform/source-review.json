@@ -1,0 +1,19 @@
+{
+  "frameworks/av": {
+    "revision": "05f24479ea6d6faf6f32155ec9bbefe9eeeb1391",
+    "sha256": {
+      "media/mtp/Android.bp": "7697fa7046f3a1b56768e6ad53d015a2c3364d59a3234bed5bbfcccdbb5fe4e5",
+      "media/mtp/MtpServer.cpp": "c03ef1299e8f6c0735fc9b257c05d02f6cd696bcee19c2f9fd309f9b2ea14e36",
+      "media/mtp/MtpStorage.cpp": "4d8c1fbb3b526264fc2188208f102ae82132fdc166eb8e626999c707245c5b73",
+      "media/mtp/MtpFfsHandle.cpp": "8c75671a917c704419c2b6aee109599e4f5a675f3886b03cefffd8e229e83c71",
+      "media/mtp/MtpFfsCompatHandle.cpp": "710f812aab16fbfdad55405f9cee751f0d5bfcee50624830fe340077b3ca0467"
+    }
+  },
+  "system/sepolicy": {
+    "sha256": {
+      "private/property_contexts": "2a7e3fa9ff5b471369fec84a1959a8c0dc98acc505a1f57e0e43d4f9b9ab1af4",
+      "private/recovery.te": "f52f2b2b459021720a26e558663e809ab3269dbd8236580967ad18dd68db3804"
+    }
+  },
+  "note": "Patches preserve normal libmtp behavior; Recovery-only transport blocks all mutations. No Android compilation or device validation."
+}
