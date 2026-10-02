@@ -16,23 +16,34 @@ soong_config_module_type {
     module_type: "cc_defaults",
     config_namespace: "recovery_mtp",
     bool_variables: ["enabled"],
-    properties: ["enabled"],
+    properties: ["enabled", "static_libs"],
 }
 recovery_mtp_defaults_type {
     name: "recovery_mtp_opt_in",
     enabled: false,
-    soong_config_variables: { enabled: { enabled: true, }, },
+    soong_config_variables: {
+        enabled: {
+            enabled: true,
+        },
+    },
+}
+// Add the private Recovery library only for opted-in products. Keep this
+// separate from the enable gate: native database tests use normal libmtp.
+recovery_mtp_defaults_type {
+    name: "recovery_mtp_transport_link",
+    soong_config_variables: {
+        enabled: {
+            static_libs: ["librecovery_mtp_transport"],
+        },
+    },
 }
 cc_binary {
     name: "recovery_mtp",
-    defaults: ["recovery_mtp_opt_in"],
+    defaults: ["recovery_mtp_opt_in", "recovery_mtp_transport_link"],
     recovery: true,
     compile_multilib: "first",
     srcs: ["daemon.cpp", "database.cpp"],
-    static_libs: ["librecovery_crypto"] + select(soong_config_variable("recovery_mtp", "enabled"), {
-        true: ["librecovery_mtp_transport"],
-        default: [],
-    }),
+    static_libs: ["librecovery_crypto"],
     shared_libs: ["libbase", "liblog", "libasyncio"],
     cflags: ["-Wall", "-Wextra", "-Werror", "-DRECOVERY_MTP"],
     init_rc: ["recovery-mtp.rc"],
