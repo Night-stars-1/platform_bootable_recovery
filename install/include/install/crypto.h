@@ -12,3 +12,6 @@ bool RecoveryCryptoAvailable();
 // Recheck real storage access so later ZIP selection can reuse installed keys.
 bool UnlockRecoveryStorage(Device* device);
 InstallResult ApplyFromEncryptedStorage(Device* device);
+// Shared picker; returns an empty path on cancellation, restricted to root.
+std::string ChooseRecoveryStorageFile(Device* device, const std::string& root,
+                                     const std::string& extension, const std::string& title);
