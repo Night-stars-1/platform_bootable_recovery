@@ -48,6 +48,7 @@
 #include "bootloader_message/bootloader_message.h"
 #include "install/adb_install.h"
 #include "install/crypto.h"
+#include "install/image_flash.h"
 #include "recovery_mtp/controller.h"
 #include "install/fuse_install.h"
 #include "install/virtiofs_install.h"
@@ -248,6 +249,7 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
   std::vector<std::string> items;
 
   const int item_sideload = 0;
+  const int item_image = 1;
   int item_virtiofs = -1;
   int item_crypto = -1;
   unsigned int non_storage_items;
@@ -258,10 +260,11 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
   for (;;) {
     ui->SetInstallStage(RecoveryUI::InstallStage::NONE);
     recovery_mtp::Start();
-    non_storage_items = 1; // ADB sideload
+    non_storage_items = 2; // ADB sideload and physical partition images
 
     items.clear();
     items.push_back("Apply from ADB");
+    items.push_back("Flash partition image");
 
     item_virtiofs = -1;
     if (InitializeVirtiofs()) {
@@ -310,7 +313,11 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
       return false;
     };
 
-    if (chosen == item_sideload) {
+    if (chosen == item_image) {
+      FlashPartitionImage(device);
+      // This is a separate image operation, not an OTA installation result.
+      return INSTALL_NONE;
+    } else if (chosen == item_sideload) {
       if (!stop_mtp_for_install()) return INSTALL_ERROR;
       status = ApplyFromAdb(device, false /* rescue_mode */, reboot_action);
     } else if (item_crypto >= 0 && chosen == item_crypto) {
