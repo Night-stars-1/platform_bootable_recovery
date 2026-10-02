@@ -200,9 +200,12 @@ bool Database::Scan(MtpObjectHandle parent) {
   if (entries_[parent].scanned) return true;
   auto fd = OpenEntry(parent);
   if (fd.get() < 0) return false;
-  DIR* raw = fdopendir(fd.get());
-  if (!raw) return false;
-  fd.release();
+  const int directory_fd = fd.release();
+  DIR* raw = fdopendir(directory_fd);
+  if (!raw) {
+    close(directory_fd);
+    return false;
+  }
   std::unique_ptr<DIR, decltype(&closedir)> directory(raw, closedir);
   const auto prefix = entries_[parent].path;
   std::vector<Entry> children;
@@ -388,7 +391,7 @@ MtpResponseCode Database::getObjectFilePath(MtpObjectHandle handle, MtpStringBuf
   // AOSP opens this path itself. Pin a checked O_RDONLY inode rather than hand
   // it a pathname that can race with a symlink/directory replacement.
   transfer_path_ = "/proc/self/fd/" + std::to_string(transfer_.get());
-  path = transfer_path_.c_str(); length = st.st_size; format = Format(*entry);
+  path.set(transfer_path_.c_str()); length = st.st_size; format = Format(*entry);
   return MTP_RESPONSE_OK;
 }
 int Database::openFilePath(const char* path, bool transcode) {
