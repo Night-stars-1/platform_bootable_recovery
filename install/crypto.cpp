@@ -150,9 +150,14 @@ std::string BrowseInternalStorage(Device* device, const std::string& root) {
 
 bool RecoveryCryptoAvailable() { return recovery_crypto::BackendInstalled(); }
 
+bool UnlockRecoveryStorage(Device* device) {
+  if (!RecoveryCryptoAvailable()) return false;
+  if (recovery_crypto::VerifyUserStorage(kUser)) return true;
+  return UnlockStorage(device);
+}
+
 InstallResult ApplyFromEncryptedStorage(Device* device) {
-  if (!RecoveryCryptoAvailable()) return INSTALL_NONE;
-  if (!recovery_crypto::VerifyUserStorage(kUser) && !UnlockStorage(device)) return INSTALL_NONE;
+  if (!UnlockRecoveryStorage(device)) return INSTALL_NONE;
   const auto root = recovery_crypto::UserStoragePath(kUser);
   const auto path = BrowseInternalStorage(device, root);
   if (path.empty() || path == "@") return INSTALL_NONE;

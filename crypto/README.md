@@ -35,10 +35,22 @@ system/security/               keystore2 implementation
 The framework has no Xiaomi paths, service names, key blobs, kernel addresses,
 hardcoded cipher settings or hardware library dependencies. Devices need no
 Recovery source patches or custom compile flags to register a backend.
-There is no default backend and nothing starts during Recovery boot. Devices
-without adaptation keep their ADB sideload, removable-storage installation,
-settings, wipe and reboot paths. With a backend installed, `Apply update`
-additionally offers `Choose ZIP from internal storage`.
+There is no default backend. Devices without adaptation keep their ADB sideload,
+removable-storage installation, settings, wipe and reboot paths without a new
+prompt or security-service startup. With a backend installed, ordinary
+interactive Recovery entry prepares metadata/DE storage and asks for the saved
+lock-screen credential before showing the home menu. Patterns use the graphical
+grid; PIN/password use the existing input UI. A no-credential protector unlocks
+without an input prompt. Already accessible storage skips redundant preparation.
+
+Cancellation or failure returns to the home menu without blocking other
+features. `Apply update` additionally offers `Choose ZIP from internal storage`;
+it rechecks actual kernel key presence/storage access, reuses a successful startup
+unlock, and offers another unlock if startup was cancelled or failed. No cached
+boolean is treated as proof of decryption. Command-driven OTA, ADB sideload,
+wipes, rescue, `--just_exit` and headless/quiescent startup skip this interactive
+prompt so they can proceed without a password. No credential is tried
+automatically, and hardware throttling remains enforced.
 
 The file browser currently exposes primary-user storage (user 0) only. The ABI
 accepts a user ID for future multi-user callers. Work profiles and adoptable
