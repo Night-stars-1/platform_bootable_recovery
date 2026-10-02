@@ -7,7 +7,8 @@
       "media/mtp/MtpStorage.cpp": "4d8c1fbb3b526264fc2188208f102ae82132fdc166eb8e626999c707245c5b73",
       "media/mtp/MtpFfsHandle.cpp": "8c75671a917c704419c2b6aee109599e4f5a675f3886b03cefffd8e229e83c71",
       "media/mtp/MtpFfsCompatHandle.cpp": "710f812aab16fbfdad55405f9cee751f0d5bfcee50624830fe340077b3ca0467",
-      "media/mtp/IMtpDatabase.h": "8ee9688ecf8be33665267a1ae579446d7e86f28d97b87711ad460642ac09f064"
+      "media/mtp/IMtpDatabase.h": "8ee9688ecf8be33665267a1ae579446d7e86f28d97b87711ad460642ac09f064",
+      "media/mtp/MtpDataPacket.cpp": "5dac5d6f7002b526f18e89079ad8dccca462cef5062ac1889c41285c42208193"
     }
   },
   "system/sepolicy": {
