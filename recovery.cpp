@@ -1123,7 +1123,13 @@ Device::BuiltinAction start_recovery(Device* device, const std::vector<std::stri
     ui->ShowText(true);
     status = INSTALL_NONE;  // No command specified
     ui->SetBackground(RecoveryUI::NO_COMMAND);
-
+    // Prompt once on ordinary interactive entry, before the home menu. Command
+    // driven OTA/sideload, wipes, rescue and just_exit never wait for a password.
+    // A stub/quiescent UI cannot display an unlock prompt. Missing adaptation,
+    // cancellation and failure all leave status=INSTALL_NONE and the menu usable.
+    if (ui->IsTextVisible()) {
+      UnlockRecoveryStorage(device);
+    }
   }
 
   if (status == INSTALL_ERROR || status == INSTALL_CORRUPT) {

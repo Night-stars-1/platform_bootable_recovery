@@ -47,7 +47,7 @@ class Credential final {
 };
 
 // The worker and optional backend use fixed Recovery paths. Presence does not
-// certify compatibility. No probing/unlocking is done at startup.
+// certify compatibility. Presence checks do not start services or unlock keys.
 bool BackendInstalled();
 const char* StatusMessage(Status status);
 const char* StageMessage(Stage stage);

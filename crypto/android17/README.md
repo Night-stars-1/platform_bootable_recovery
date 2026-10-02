@@ -318,6 +318,13 @@ unvisited cells on rows, columns and 45-degree diagonals follows the reviewed
 uwuAOSP LockPatternView rule. Volume keys navigate the same grid
 and controls; Power selects the highlighted target when touch is unavailable.
 Custom/stub UIs can decline the optional pattern API without affecting sideload.
+On ordinary interactive Recovery entry, an installed backend now starts the
+metadata/DE preparation and opens this credential UI before the home menu.
+Cancel or failure returns to the home menu. Selecting an internal-storage ZIP
+later reuses verified unlocked storage or lets the user try unlocking again.
+Command-driven OTA/sideload, wipe, rescue, just-exit and headless boots do not
+wait for credential input. Startup behavior still needs maintainer build and
+device verification; this change does not itself fix a backend unlock failure.
 The UI views the caller's locked credential memory and neither logs nor copies
 the pattern into a text/menu string. Cancelling clears it and leaving the page
 redraws both framebuffer pages. Ordinary menus retain their swipe scrolling.
