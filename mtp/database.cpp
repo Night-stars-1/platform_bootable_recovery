@@ -181,10 +181,15 @@ MtpResponseCode Database::setDevicePropertyValue(MtpDeviceProperty, MtpDataPacke
 MtpResponseCode Database::resetDeviceProperty(MtpDeviceProperty) { return MTP_RESPONSE_DEVICE_PROP_NOT_SUPPORTED; }
 MtpResponseCode Database::getObjectPropertyList(MtpObjectHandle handle, uint32_t format, uint32_t property, int group, int depth, MtpDataPacket& packet) {
   if (group) return MTP_RESPONSE_SPECIFICATION_BY_GROUP_UNSUPPORTED;
+  if (!property) return MTP_RESPONSE_PARAMETER_NOT_SUPPORTED;
+  if (format > UINT16_MAX) return MTP_RESPONSE_INVALID_OBJECT_FORMAT_CODE;
   if (depth != 0 && depth != 1 && depth != -1) return MTP_RESPONSE_SPECIFICATION_BY_DEPTH_UNSUPPORTED;
   MtpObjectHandleList handles;
   if (handle == UINT32_MAX || handle == 0) {
-    std::unique_ptr<MtpObjectHandleList> all(getObjectList(kStorageId, format, handle == 0 && depth == 0 ? MTP_PARENT_ROOT : 0));
+    // Match Android's root selectors: 0 means direct root children for depth
+    // 0/1, while UINT32_MAX at depth 0 (or either selector at -1) means all.
+    const bool shallow = depth == 1 || (handle == 0 && depth == 0);
+    std::unique_ptr<MtpObjectHandleList> all(getObjectList(kStorageId, format, shallow ? MTP_PARENT_ROOT : 0));
     if (!all) return MTP_RESPONSE_GENERAL_ERROR;
     handles = *all;
   } else {

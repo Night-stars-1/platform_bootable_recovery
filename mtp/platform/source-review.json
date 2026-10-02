@@ -13,7 +13,18 @@
     "sha256": {
       "private/property_contexts": "2a7e3fa9ff5b471369fec84a1959a8c0dc98acc505a1f57e0e43d4f9b9ab1af4",
       "private/recovery.te": "f52f2b2b459021720a26e558663e809ab3269dbd8236580967ad18dd68db3804"
-    }
+    },
+    "revision": "b41cbf3b46882139654574fe46ca5cf8175bf8a5",
+    "input": "Reviewed working-tree input with existing opt-in Recovery crypto policy."
   },
-  "note": "Patches preserve normal libmtp behavior; Recovery-only transport blocks all mutations. No Android compilation or device validation."
+  "note": "Patches preserve normal libmtp behavior; Recovery-only transport blocks all mutations. No Android compilation or device validation.",
+  "dependency_review": {
+    "system/core/libusbhost/Android.bp": {
+      "sha256": "3cb57c2231b04cda073d9cf29835e0d73df521aa3a1238b233b43d3efb88f9e0",
+      "decision": "No Recovery variant: excluded from transport link dependencies; only its headers are included. All compiled USB host calls are guarded by MTP_HOST, which is undefined in this variant."
+    },
+    "system/core/libusbhost/include/usbhost/usbhost.h": {
+      "sha256": "4a04d2ca799ea09db42683fbbe9033e4e37fb4b79df85883a3b0bf6352fc553c"
+    }
+  }
 }

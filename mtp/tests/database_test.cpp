@@ -108,3 +108,24 @@ TEST(RecoveryMtp, RefusesMutationInvalidHandlesAndUnboundedEnumeration) {
   Database traversal(root + "/../");
   EXPECT_FALSE(traversal.valid());
 }
+TEST(RecoveryMtp, RootPropertyListsPreserveShallowEnumeration) {
+  TemporaryDir temp;
+  const std::string root(temp.path);
+  ASSERT_EQ(0, mkdir((root + "/folder").c_str(), 0700));
+  ASSERT_TRUE(android::base::WriteStringToFile("child", root + "/folder/child"));
+  ASSERT_TRUE(android::base::WriteStringToFile("root", root + "/file"));
+  Database db(root);
+  auto count = [&](MtpObjectHandle handle, int depth) {
+    MtpDataPacket packet;
+    const auto result = db.getObjectPropertyList(handle, 0, MTP_PROPERTY_NAME, 0, depth, packet);
+    EXPECT_EQ(MTP_RESPONSE_OK, result);
+    if (result != MTP_RESPONSE_OK) return UINT32_MAX;
+    const auto* data = packet.getData();
+    return uint32_t(data[0]) | uint32_t(data[1]) << 8 | uint32_t(data[2]) << 16 | uint32_t(data[3]) << 24;
+  };
+  EXPECT_EQ(2u, count(0, 0));
+  EXPECT_EQ(2u, count(0, 1));
+  EXPECT_EQ(2u, count(UINT32_MAX, 1));
+  EXPECT_EQ(3u, count(0, -1));
+  EXPECT_EQ(3u, count(UINT32_MAX, 0));
+}
