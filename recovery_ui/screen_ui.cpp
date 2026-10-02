@@ -1082,23 +1082,21 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(const std::vector<std::s
 }
 
 void ScreenRecoveryUI::DrawStatusPageLocked() {
-  using namespace recovery_m3e;
-  M3eCanvas canvas;
-  Metrics m(ScreenWidth());
-  auto palette = Palette::ForMode(fastbootd_logo_enabled_);
-  int top = std::max(margin_height_, Dp(m.width, 24));
-  std::string title = m3e_status_title_.empty() ?
-      (fastbootd_logo_enabled_ ? "Fastboot" : "Recovery") : m3e_status_title_;
-  int y = DrawHeader(canvas, m, top, false, false, fastbootd_logo_enabled_,
-      char_width_, char_height_, title_lines_, palette, title, false);
-  DrawPrompt(canvas, m, y,
-      {m3e_status_message_.empty() ? "Please wait" : m3e_status_message_},
-      palette, AlertLevel::Info);
+  // The display resource is composited onto black for minui RGB compatibility.
+  // Keep transitions free of headers, status messages, controls and overlays.
+  gr_color(0, 0, 0, 255);
+  gr_clear();
+  if (!status_logo_) return;
+  int logo_width = gr_get_width(status_logo_.get());
+  int logo_height = gr_get_height(status_logo_.get());
+  int width = std::min(ScreenWidth(), logo_width);
+  int height = std::min(ScreenHeight(), logo_height);
+  DrawSurface(status_logo_.get(), (logo_width - width) / 2, (logo_height - height) / 2,
+      width, height, (ScreenWidth() - width) / 2, (ScreenHeight() - height) / 2);
 }
 
 void ScreenRecoveryUI::draw_battery_capacity_locked() {
-  if (is_battery_less || (!menu_ && !IsInstallPageLocked() &&
-      (!show_text || (file_viewer_text_ && text_ == file_viewer_text_)))) return;
+  if (is_battery_less || (!menu_ && !IsInstallPageLocked() && !pattern_input_)) return;
   M3eCanvas canvas;
   recovery_m3e::Metrics m(ScreenWidth());
   int top = std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
@@ -1497,13 +1495,6 @@ void ScreenRecoveryUI::SetInstallStage(InstallStage stage) {
     m3e_install_logs_.clear();
   }
   m3e_install_stage_ = stage;
-  update_screen_locked();
-}
-
-void ScreenRecoveryUI::SetStatusMessage(const std::string& title, const std::string& message) {
-  std::lock_guard<std::mutex> lg(updateMutex);
-  m3e_status_title_ = title;
-  m3e_status_message_ = message;
   update_screen_locked();
 }
 

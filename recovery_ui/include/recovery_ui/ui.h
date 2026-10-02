@@ -87,8 +87,6 @@ class RecoveryUI {
   using InstallStage = recovery_ui::InstallStage;
   // Optional presentation API; custom/stub UIs keep their existing behavior.
   virtual void SetInstallStage(InstallStage) {}
-  // Optional status for work between interactive pages. Never contains credentials.
-  virtual void SetStatusMessage(const std::string&, const std::string&) {}
   enum Icon {
     NONE,
     INSTALLING_UPDATE,
