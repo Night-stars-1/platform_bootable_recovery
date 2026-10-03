@@ -1,372 +1,902 @@
-# Android 17 existing-key recovery backend
+# Android 17 Recovery device decryption adaptation guide
 
-English | [简体中文](README.zh-CN.md)
+English | [简体中文](README.zh-CN.md) | [General framework](../README.md)
 
-This directory now contains an implementation, not the unsupported callback
-skeleton in `../examples`. It implements the existing-key unlock chain for the
-reviewed Android 17 platform formats. **It has not been compiled, linked, run on
-Android, or used to decrypt a phone.** Do not advertise it as device-tested.
-The maintainer has requested that only they perform builds.
+Examples use `device/acme/mydevice`, `vendor/acme/mydevice`, and the module prefix
+`mydevice_rec_`. Replace them with your device paths and a unique module prefix.
+The examples assume **a real AIDL KeyMint, AIDL Gatekeeper, and SecureClock /
+SharedSecret provided by the KeyMint process**. Follow the alternatives below if
+your device uses a different service arrangement. Vendor libraries, service paths,
+policy domains, and fstab entries must come from your device; changing the device
+name alone is not enough.
 
-The independent Python deployment tests and synthetic fixture generation do not
-prove that native code or vendor security services work. The native test sources
-are provided for the maintainer to compile/run.
+## 0. Prerequisites
 
-## Implemented chain
+Run ADB commands in normal Android, and `rg` from the source root. Replace the
+`.config` path with your actual kernel configuration path.
 
-1. Read a root-owned, non-writable ramdisk profile; connect to the selected AIDL
-   KeyMint device. Validate its security level, negotiate the configured
-   SharedSecret participants and connect to AIDL or HIDL Gatekeeper/Weaver.
-   AIDL uses non-lazy `checkService`. The reviewed Recovery libhidl resolves
-   HIDL through local passthrough implementations, not hwservicemanager.
-   No KeyMint generation, enrollment or deletion runs.
-   A concurrently running keystore2 daemon is refused to avoid replacing another
-   negotiator's agreement. Device init/manifest must provide only reviewed HALs.
-2. Read the reviewed crypto fstab, mount metadata if necessary and retrieve its
-   **existing** vold v1 key directory. Decrypt through KeyMint with the original
-   secdiscardable application ID. Convert wrapped keys for this boot and load a
-   read-only `dm-default-key` mapping. Mount userdata read-only without fsck,
-   journal replay, F2FS roll-forward or formatting.
-3. Restore System DE from `/data/unencrypted/key`, then the selected user's DE
-   key. Install them with `FS_IOC_ADD_ENCRYPTION_KEY`; compare their kernel key
-   identifiers/descriptors to actual directory policies and verify key presence.
-4. Read the current `sp-handle` from a private locksettings database snapshot,
-   parse PasswordData/protector state and determine the real credential type.
-   PIN/password bytes and Android pattern cell encoding are supported; current
-   empty-LSKF protectors use the padded `default-password` path, old protectors
-   retain their stored scrypt parameters. A missing `.pwd` alone is not accepted
-   as proof of an empty LSKF; the explicit stored password quality must also be 0.
-5. Verify the LSKF through Gatekeeper (including its fake user ID offset) or the
-   protector's Weaver slot. Respect hardware errors/throttling. Do not re-enroll.
-   Use the returned Gatekeeper auth token directly in KeyMint operations and use
-   SecureClock when required. Read the existing locksettings protector key from
-   the reviewed keystore2 database and unwrap SP in the correct v1/v2/v3 order.
-   No keystore2 key import, namespace migration or database writes.
-6. Preserve SP's ASCII-hex representation, derive the v1/v2 SHA-512 or v3
-   SP800-108 HMAC-SHA256 `fbe-key`, and recover the existing CE key. Rotated `cx*`
-   candidates are tried without renaming/fixating/deleting any key directory.
-   Compare the installed key to `/data/media/<user>`'s policy. The separate
-   Recovery framework still verifies mounted storage/key presence/readability
-   before opening the ZIP browser.
+| Requirement | How to check |
+| --- | --- |
+| A real AIDL KeyMint | `adb -d shell service check android.hardware.security.keymint.IKeyMintDevice/default`; use the instance declared in VINTF |
+| Access to the actual Gatekeeper / Weaver implementation | See [Gatekeeper and Weaver queries and configuration](#gatekeeper-and-weaver-queries-and-configuration) |
+| Kernel support for the device's actual fscrypt, metadata encryption, and hardware-wrapped key paths | `rg 'CONFIG_.*(ENCRYPTION\|DEFAULT_KEY\|CRYPTO)' path/to/kernel/.config`<br>`adb -d shell "cat /vendor/etc/fstab.*"`; check the configuration against fstab. For wrapped keys, also verify [storage driver support](https://source.android.com/docs/security/features/encryption/hw-wrapped-keys) |
 
-SQLite databases and their WALs are read through non-symlink file descriptors.
-Checksummed, committed WAL frames are applied to a private in-memory image;
-uncommitted/incomplete frames are not published. SQLite uses `:memory:` and
-read-only deserialization, never the original database or SHM. A nonempty hot
-rollback journal fails the attempt instead of running database recovery. Userdata
-must be read-only before these snapshots are read.
+## 1. Files to create
 
-The backend contains no destructive fallback. An existing pending upgraded key,
-`KEY_REQUIRES_UPGRADE`, missing key, malformed protector, unavailable service or
-unsupported format returns an ABI error and preserves stored keys/credentials.
-Successful or partial key installation remains in the kernel until reboot; the
-worker releases its own secrets/handles without evicting those keys. A hung or
-crashed worker is still bounded by the parent framework's deadline.
-
-The private device-mapper table-load and activation requests use libdm's stable
-`4.0.0` request ABI, rather than the newer version of the build's Linux headers.
-This follows `DeviceMapper::InitIo` and works with older supported kernel minors.
-The read-only mapping and secure, wiped ioctl buffer remain unchanged; neither
-the table nor its key is sent through libdm's table-debug logging path.
-
-## Opt-in device adaptation
-
-The backend is **disabled by default at the Soong module level**. Its HAL/SQLite
-dependencies are conditional too. Syncing this directory does not enable it or
-add vendor services to unrelated Recovery products.
-
-Keep the device adaptation outside `bootable/recovery`:
+The following layout is recommended. File names must match the `src`, include,
+and installation declarations used below:
 
 ```text
-device/<vendor>/<device>/recovery-crypto/
-  Android.bp
-  recovery.crypto.conf
-  recovery.crypto.fstab
-  init*.rc / VINTF / sepolicy and reviewed vendor dependency packaging
+device/acme/mydevice/
+  BoardConfig.mk                  ← Existing file; add an include
+  device.mk                       ← Existing product file; add inherit-product
+  recovery-crypto/
+    config.mk                     ← Device flag shared by both integration points
+    crypto.mk                     ← Select modules for packaging
+    BoardConfig.mk                ← Device policy and platform key-read flag
+    Android.bp                    ← Configuration modules; optional authentication bridge
+    recovery.crypto.conf          ← Security services used by the backend
+    recovery.crypto.fstab         ← Metadata / userdata configuration
+    manifest.xml                  ← Recovery security HAL declarations
+    init.recovery.mydevice-crypto.rc ← Security service startup
+    sepolicy/
+      recovery.te                 ← Required device permissions
+      file_contexts               ← Create only if new file labels are needed
+      service_contexts            ← Create only if new service instance labels are needed
+    ueventd.crypto.rc             ← Create and integrate only if node permissions are missing
+
+vendor/acme/mydevice/
+  Android.bp                      ← Usually has a namespace; preserve generated content
+  proprietary/
+    Android.bp                    ← Recovery vendor modules; preserve existing content
+    vendor/bin/hw/...             ← Extracted security services
+    vendor/lib64/...              ← Extracted dependency libraries
 ```
 
-Use `device.example.bp` and `device.example.mk` as packaging templates. Replace
-the example module names with device-specific names. Install exactly one backend
-with stem `librecovery_crypto_backend`. The profile is installed as
-`/system/etc/recovery.crypto.conf`, the crypto fstab as
-`/system/etc/recovery.crypto.fstab` in the Recovery ramdisk.
-Custom crypto fstab names must also stay under `/system/etc/`; profiles cannot
-select a userdata/metadata-resident fstab.
+| File | Required? | Purpose and source |
+| --- | --- | --- |
+| `recovery.crypto.conf` | Required | Selects backend services; derive it from the actual HALs and normal keystore2's SharedSecret negotiation participants |
+| `recovery.crypto.fstab` | Required | Partition and encryption configuration; use the normal system's `/metadata` and `/data` fstab entries |
+| `Android.bp` | Required | Defines modules and installation locations; written by the maintainer |
+| Product `.mk` / BoardConfig integration | Required | Explicitly selects modules and policy; written by the maintainer. This example uses three `.mk` files |
+| `manifest.xml` | The declarations must exist | Reuse an existing Recovery fragment if it declares every required HAL; otherwise add a fragment |
+| Init RC | The startup configuration must exist | Reuse an existing Recovery RC if it correctly starts every required service; otherwise add one |
+| Vendor Recovery modules | Device-dependent | Reuse modules with suitable Recovery variants; otherwise declare new modules for proprietary binaries and libraries |
+| `sepolicy/` | The permissions must exist | Add permissions missing from existing policy; do not blindly copy another device's domains or device nodes |
+| `auth_service.cpp` or a common authentication bridge | Optional | Add only when the actual services require bridging; not every device needs it |
+| Ueventd, firmware, and persist mount configuration | Device-dependent | Derive from the nodes, firmware paths, and startup order required by this device's security services |
 
-Use the **normal system's real encryption options**, not an old Recovery fstab
-with `fileencryption=ice,wrappedkey`. This separate fstab is used only by the
-optional backend and does not replace Recovery's regular partition table. For
-example, a device's real userdata options might include:
+Write these files in the order below. Dependencies and SELinux patches modified
+by the platform helper belong to other platform projects, not this device
+directory; see step 10.
+
+## 2. Write `recovery.crypto.conf`
+
+Complete configuration example:
+
+```ini
+profile_version=1
+platform_sdk=37
+storage_binding=none
+fstab=/system/etc/recovery.crypto.fstab
+keymint_service=android.hardware.security.keymint.IKeyMintDevice/default
+security_level=tee
+gatekeeper_transport=aidl
+gatekeeper_instance=default
+weaver_transport=none
+weaver_instance=
+secureclock_service=android.hardware.security.secureclock.ISecureClock/default
+sharedsecret_services=android.hardware.security.sharedsecret.ISharedSecret/default
+```
+
+| Field | What to enter |
+| --- | --- |
+| `profile_version`, `platform_sdk` | The current parser accepts only `1` and `37`; changing these numbers does not add support for other Android versions |
+| `storage_binding` | Currently accepts only `none`; first confirm that the actual platform does not use a storage-binding seed |
+| `fstab` | Path to the separate crypto fstab inside Recovery; must be under `/system/etc/` |
+| `keymint_service` | `android.hardware.security.keymint.IKeyMintDevice/` followed by the actual instance name |
+| `security_level` | The actual security level used by the key; only `tee` or `strongbox` |
+| `gatekeeper_transport`, `weaver_transport` | `aidl`, `hidl`, or `none`, according to the actual authentication implementation |
+| `gatekeeper_instance`, `weaver_instance` | The actual instance name when using the service, such as `default`; must be empty for `none` |
+| `secureclock_service` | The full actual SecureClock service name; leave empty only after confirming it is unnecessary |
+| `sharedsecret_services` | Comma-separated full AIDL SharedSecret service names; at least one, without duplicates or spaces |
+| `sharedsecret_hidl_instances` | Optional, such as `4.1/default`; supports only `4.0/4.1` with `default/strongbox` instances |
+
+### Gatekeeper and Weaver queries and configuration
+
+In normal Android, list the AIDL and HIDL implementations separately:
+
+```bash
+adb -d shell service list
+```
+
+```bash
+adb -d shell lshal
+```
+
+Look for `gatekeeper` and `weaver`. Common results are shown below; the instance
+name is the part after the last `/`:
 
 ```text
-fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0
-keydirectory=/metadata/vold/metadata_encryption
-metadata_encryption=aes-256-xts:wrappedkey_v0
+android.hardware.gatekeeper.IGatekeeper/default
+android.hardware.weaver.IWeaver/default
+android.hardware.gatekeeper@1.0::IGatekeeper/default
+android.hardware.weaver@1.0::IWeaver/default
 ```
 
-These are format examples, not device block paths. Copy only the device's actual
-`/metadata` and `/data` entries; preserve its real filesystem/mount options.
-Configure the exact KeyMint, Gatekeeper, Weaver, SecureClock and **all** relevant
-SharedSecret participants. `sharedsecret_services` lists AIDL services;
-optional `sharedsecret_hidl_instances=4.1/default,4.1/strongbox` selects the
-highest advertised HIDL Keymaster version per security level. Do not configure
-both 4.0 and 4.1 for the same instance. All configured participants receive the
-same sorted parameter list and must return the same checksum. Devices without
-that option keep the AIDL-only path. Set transport to `none` with an empty instance
-only when that service is genuinely not needed by any protector on that device.
-Gatekeeper can still be needed for the SP SID after Weaver verification.
+Edit `device/<vendor>/<device>/recovery-crypto/recovery.crypto.conf`:
 
-The profile cannot run commands, pick arbitrary backend libraries, disable
-authentication or choose a key blob from user input. It issues no arbitrary init
-commands; HIDL requires the reviewed local passthrough implementation in Recovery.
-Vendor HAL binaries/libraries, firmware availability, Binder
-drivers, compatible OS/security-patch properties, VINTF and narrowly scoped
-SELinux permissions must be supplied and reviewed by the device maintainer.
-Keep SELinux enforcing. There is no universal vendor-security service bundle.
-If a passthrough HAL requires vendor-internal properties, keep it in an appropriate
-vendor HAL service domain and provide a reviewed device-owned AIDL protocol bridge.
-Do not grant coredomain Recovery access that violates vendor property isolation.
-Recovery's servicemanager uses VintfObjectRecovery, which merges fragments under
-`/system/etc/vintf/manifest/`; add a unique Recovery fragment rather than replacing
-existing health/fastboot declarations or the normal Android vendor manifest.
+| Implementation found | Configuration |
+| --- | --- |
+| AIDL Gatekeeper | `gatekeeper_transport=aidl`, `gatekeeper_instance=actual-instance-name` |
+| HIDL Gatekeeper | `gatekeeper_transport=hidl`, `gatekeeper_instance=actual-instance-name` |
+| AIDL / HIDL Weaver | `weaver_transport=aidl` or `hidl`, `weaver_instance=actual-instance-name` |
+| The current credential does not use Weaver | `weaver_transport=none`, `weaver_instance=` |
 
-## Recovery dependency preparation
+For the `default` instance, enter `gatekeeper_instance=default` or
+`weaver_instance=default`. Also verify the vendor implementation; failing to find
+a service does not prove that the credential does not use Weaver.
 
-Some AIDL projects, their analyzer runtime and SQLite do not provide Recovery variants in this platform.
-The helper adds only their build declarations, leaving normal-system code intact.
-It verifies the reviewed source hashes before making any change, backs up original
-files outside the source tree and refuses conflicting or unknown declarations.
+When HIDL is needed, confirm that a working local passthrough implementation
+exists in Recovery. A HIDL service process or VINTF declaration in normal Android
+alone is insufficient. Devices without a usable passthrough implementation need
+their own bridge; see step 6.
 
-Run from the Android source root; each command is separate:
+Keep every SharedSecret participant used by normal Android. For a device with a
+bridge providing a legacy instance, such as diting, use:
+
+```ini
+sharedsecret_services=android.hardware.security.sharedsecret.ISharedSecret/default,android.hardware.security.sharedsecret.ISharedSecret/legacy
+```
+
+If using a directly callable HIDL Keymaster passthrough implementation, retain
+the actual AIDL participants and add:
+
+```ini
+sharedsecret_hidl_instances=4.1/default
+```
+
+Do not list the same hardware participant through both an AIDL bridge and HIDL,
+or list the same HIDL instance as both 4.0 and 4.1. The combined AIDL and HIDL
+participant limit is four. Using Weaver does not necessarily let you disable
+Gatekeeper: SP SID verification may still require it.
+
+## 3. Write `recovery.crypto.fstab`
+
+`recovery.crypto.fstab` tells the decryption backend where the device's data
+partitions are and which encryption methods they use.
+
+The following example is for diting. Other devices must use their own entries:
+
+```text
+/dev/block/bootdevice/by-name/metadata /metadata ext4 noatime,nosuid,nodev wait
+/dev/block/bootdevice/by-name/userdata /data f2fs noatime,nosuid,nodev,reserve_root=32768,resgid=1065,fsync_mode=nobarrier,inlinecrypt wait,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0,keydirectory=/metadata/vold/metadata_encryption,metadata_encryption=aes-256-xts:wrappedkey_v0
+```
+
+Keep each partition entry on a single line; do not split the long line above.
+The five fstab columns are:
+
+```text
+Block device path  Mount point  Filesystem  Linux mount options  Android fs_mgr options
+```
+
+## 4. Write the device `Android.bp`
+
+First define the four configuration modules. Use the following as a starting
+point. If reusing existing init/VINTF files, remove the corresponding duplicate
+modules and their entries in the product package list:
+
+```bp
+// SPDX-License-Identifier: Apache-2.0
+soong_namespace {
+    imports: ["vendor/acme/mydevice"],
+}
+
+prebuilt_etc {
+    name: "mydevice_rec_crypto_config",
+    recovery: true,
+    src: "recovery.crypto.conf",
+    filename: "recovery.crypto.conf",
+}
+prebuilt_etc {
+    name: "mydevice_rec_crypto_fstab",
+    recovery: true,
+    src: "recovery.crypto.fstab",
+    filename: "recovery.crypto.fstab",
+}
+prebuilt_etc {
+    name: "mydevice_rec_crypto_manifest",
+    recovery: true,
+    src: "manifest.xml",
+    relative_install_path: "vintf/manifest",
+    filename: "mydevice-recovery-crypto.xml",
+}
+prebuilt_etc {
+    name: "mydevice_rec_crypto_init",
+    recovery: true,
+    src: "init.recovery.mydevice-crypto.rc",
+    relative_install_path: "init",
+    filename: "init.recovery.mydevice-crypto.rc",
+}
+```
+
+| Property | What to enter |
+| --- | --- |
+| `name` | A unique build module name, referenced later by `PRODUCT_PACKAGES` |
+| `src` | Source path relative to this `Android.bp`; the file must exist |
+| `filename` | Actual file name inside Recovery; it may differ from the module name |
+| `relative_install_path` | Subdirectory within the `prebuilt_etc` installation directory |
+| `recovery: true` | Installs into Recovery, not the normal system partition |
+| `imports` | Search scope for unqualified module names; use directories that actually declare `soong_namespace` |
+
+The files install under Recovery's `/system/etc/`,
+`/system/etc/vintf/manifest/`, and `/system/etc/init/`. `Android.bp` only defines
+modules. It neither selects them for packaging nor starts services. See step 9
+for device module selection.
+
+## 5. Declare vendor security services and all library dependencies
+
+Find the corresponding executables, libraries, and dependencies in normal Android.
+Reuse existing modules if they provide suitable Recovery variants. Otherwise,
+declare Recovery-specific modules for the original binaries in the vendor
+project. Do not replace the normal system HAL's libraries with incompatible
+newer versions.
+
+For example, use `vendor/acme/mydevice/proprietary/Android.bp`. Binary paths,
+library names, and dependencies below are **placeholders**: replace them with
+the actual contents of your device's ELF files. Do not overwrite the generated
+main vendor file. If the target file already exists, retain its modules and add
+or maintain the dedicated declarations.
+
+```bp
+soong_config_module_type {
+    name: "mydevice_rec_prebuilt_binary_type",
+    module_type: "cc_prebuilt_binary",
+    config_namespace: "mydevice_recovery_crypto",
+    bool_variables: ["device_enabled"],
+    properties: ["enabled", "shared_libs"],
+}
+soong_config_module_type {
+    name: "mydevice_rec_prebuilt_library_type",
+    module_type: "cc_prebuilt_library_shared",
+    config_namespace: "mydevice_recovery_crypto",
+    bool_variables: ["device_enabled"],
+    properties: ["enabled", "shared_libs"],
+}
+
+mydevice_rec_prebuilt_binary_type {
+    name: "mydevice_rec_keymint",
+    stem: "mydevice-recovery-keymint",
+    srcs: ["vendor/bin/hw/android.hardware.security.keymint-service-example"],
+    recovery: true,
+    compile_multilib: "64",
+    enabled: false,
+    strip: { none: true },
+    visibility: ["//visibility:public"],
+    soong_config_variables: {
+        device_enabled: {
+            enabled: true,
+            shared_libs: ["libbase", "libbinder_ndk", "liblog", "mydevice_rec_libvendorcrypto"],
+        },
+    },
+}
+mydevice_rec_prebuilt_library_type {
+    name: "mydevice_rec_libvendorcrypto",
+    stem: "libvendorcrypto",
+    srcs: ["vendor/lib64/libvendorcrypto.so"],
+    recovery: true,
+    compile_multilib: "64",
+    enabled: false,
+    strip: { none: true },
+    visibility: ["//visibility:public"],
+    soong_config_variables: {
+        device_enabled: {
+            enabled: true,
+            shared_libs: ["liblog"],
+        },
+    },
+}
+```
+
+`srcs` is relative to the module file's directory; the example's `vendor/...`
+paths require the modules to be under `proprietary/`. Preserve the library's
+actual file name in `stem`: a dependency on `libvendorcrypto.so` cannot be
+satisfied by installing it under a different module-derived file name.
+HAL passthrough libraries may also need `relative_install_path: "hw"`. Adjust
+the 64-bit configuration to the actual service architecture.
+
+Declare the actual Gatekeeper, required Weaver, separate SecureClock, TEE
+listeners, and their recursive vendor library dependencies in the same way.
+Inspect ELF `DT_NEEDED`, map every dependency to a real Soong module, and confirm
+its matching Recovery/architecture variant. Also check runtime `dlopen`
+libraries, configuration files, and firmware; `DT_NEEDED` does not list them all.
+
+`shared_libs` contains module names, not `.so` paths. Platform Binder/HIDL/AIDL
+libraries and vendor prebuilts must use compatible interface versions. Do not
+copy diting's twenty-plus libraries without checking, or hide unresolved
+dependencies with `check_elf_files: false`.
+
+Confirm that a vendor ancestor directory has a valid namespace, referenced by
+both the device's `imports` and the product's `PRODUCT_SOONG_NAMESPACES`. If
+`vendor/acme/mydevice/Android.bp` already declares the namespace, there is no
+need to declare a separate one under `proprietary/`.
+
+## 6. Decide whether `auth_service.cpp` / a Qualcomm authentication bridge is needed
+
+If Recovery can directly access the configured native AIDL Gatekeeper and
+SharedSecret, **no authentication bridge module is needed**. A working HIDL
+passthrough implementation can also be configured as described in step 2.
+
+Diting currently uses a device bridge to expose QTI HIDL Gatekeeper 1.0 and
+legacy Keymaster shared-secret negotiation as AIDL services. Before using the
+same bridge, review the HAL ABI, factory prototypes, firmware, and vendor
+property dependencies. The device maintenance project provides the common
+source and rules; they are not included in this Recovery repository. See:
+
+- [Qualcomm common source and module definitions](https://github.com/Night-stars-1/uwuaosp-diting/tree/main/cloud/diting_recovery_crypto/common)
+- [Diting device Android.bp](https://github.com/Night-stars-1/uwuaosp-diting/blob/main/cloud/diting_recovery_crypto/Android.bp)
+
+If `device/qcom/recovery-crypto-common` is already deployed in your Android
+source tree, add it to the device namespace's `imports` and append the bridge
+declarations below. Define the library modules from step 5 first; do not leave
+nonexistent example names in the configuration:
+
+```bp
+soong_config_module_type {
+    name: "mydevice_crypto_cc_defaults_type",
+    module_type: "cc_defaults",
+    config_namespace: "mydevice_recovery_crypto",
+    bool_variables: ["device_enabled"],
+    properties: ["enabled", "shared_libs"],
+}
+mydevice_crypto_cc_defaults_type {
+    name: "mydevice_crypto_bridge_defaults",
+    enabled: false,
+    soong_config_variables: {
+        device_enabled: {
+            enabled: true,
+            shared_libs: [
+                "mydevice_rec_libqtikeymaster4", "libhidlbase", "libutils", "liblog",
+                "libbinder_ndk", "libbase", "android.hardware.gatekeeper-V1-ndk",
+                "android.hardware.gatekeeper@1.0",
+                "android.hardware.security.sharedsecret-V1-ndk",
+                "android.hardware.security.keymint-V5-ndk",
+                "android.hardware.keymaster@4.0", "android.hardware.keymaster@4.1",
+            ],
+        },
+    },
+}
+cc_binary {
+    name: "mydevice_rec_auth_service",
+    defaults: ["mydevice_crypto_bridge_defaults", "qcom_recovery_crypto_auth_sources"],
+    stem: "mydevice-recovery-auth",
+    recovery: true,
+    compile_multilib: "64",
+}
+```
+
+The first block defines a defaults type controlled by this device's
+`mydevice_recovery_crypto.device_enabled`. The second disables it by default
+and sets dependencies when enabled; the third creates the executable. The
+common defaults provide C++ sources through a `filegroup` in the common
+directory, so Soong does not incorrectly look for `auth_service.cpp` in the
+device directory.
+
+After adding the bridge, select its module in the product list, start it through
+init, declare its registered interfaces in VINTF, and update the
+Gatekeeper/SharedSecret instances in the conf. Adding `cc_binary` alone is not
+enough. The Qualcomm common layer does not replace adaptation of each device's
+proprietary libraries and runtime requirements.
+
+## 7. Write `manifest.xml`
+
+This example matches the initial service arrangement: KeyMint, SecureClock,
+SharedSecret, and native AIDL Gatekeeper. Set versions and instances to match
+the actual device services. Linking against a `*-V5-ndk` library does not prove
+that the vendor process implements a V5 HAL.
+
+```xml
+<manifest version="1.0" type="device">
+    <hal format="aidl">
+        <name>android.hardware.security.keymint</name>
+        <version>1</version>
+        <fqname>IKeyMintDevice/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.secureclock</name>
+        <version>1</version>
+        <fqname>ISecureClock/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.sharedsecret</name>
+        <version>1</version>
+        <fqname>ISharedSecret/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.gatekeeper</name>
+        <version>1</version>
+        <fqname>IGatekeeper/default</fqname>
+    </hal>
+</manifest>
+```
+
+For AIDL Weaver, add `android.hardware.weaver` / `IWeaver/<instance>` with its
+actual version. If a bridge provides `ISharedSecret/legacy`, add that fqname to
+the SharedSecret entry. Preserve declarations for other interfaces registered
+by the vendor process, such as RKP. HIDL interfaces cannot become AIDL simply
+by changing their manifest names; they still need the correct implementation
+and transport configuration.
+
+The module installs as
+`/system/etc/vintf/manifest/mydevice-recovery-crypto.xml`, merged by
+`VintfObjectRecovery`. Use a separate fragment and preserve existing
+health/fastboot fragments. **The manifest only declares services; it does not
+start them or supply missing implementations.**
+
+## 8. Write init RC, device node permissions, and device policy
+
+### 8.1 `init.recovery.mydevice-crypto.rc`
+
+Start with the corresponding service RC from normal Android, then adjust paths,
+startup timing, users, groups, and SELinux contexts for Recovery. This example
+uses `mydevice_rec_keymint` and a separately declared `mydevice_rec_gatekeeper`
+executable. `<KEYMINT_DOMAIN>` and `<GATEKEEPER_DOMAIN>` are placeholders that
+must be replaced, not valid policy domains.
+
+```rc
+on post-fs
+    start mydevice-recovery-keymint
+    start mydevice-recovery-gatekeeper
+
+service mydevice-recovery-keymint /system/bin/mydevice-recovery-keymint
+    class hal
+    user system
+    group system
+    seclabel u:r:<KEYMINT_DOMAIN>:s0
+    disabled
+    oneshot
+
+service mydevice-recovery-gatekeeper /system/bin/mydevice-recovery-gatekeeper
+    class hal
+    user system
+    group system
+    seclabel u:r:<GATEKEEPER_DOMAIN>:s0
+    disabled
+    oneshot
+
+on property:init.svc.fastbootd=running
+    stop mydevice-recovery-gatekeeper
+    stop mydevice-recovery-keymint
+```
+
+Vendor services may require additional groups, sockets, TEE listeners, and
+read-only firmware/persist mounts. Start security services after these mounts
+and listeners are ready. Separate SecureClock/Weaver processes must also be
+defined, started, and packaged. When using an authentication bridge, replace
+the Gatekeeper startup entry with the actual bridge and retain its required
+vendor implementation. Do not start two services registering the same instance.
+
+The executable path comes from the module's `stem` and installation location.
+For example, `stem: "mydevice-recovery-keymint"` installs as
+`/system/bin/mydevice-recovery-keymint`; the RC must not use the module name or
+original vendor path instead. Each `start` references an RC service name, not
+a Soong module name.
+
+Install the RC under `/system/etc/init/` for automatic discovery by init,
+without competing with the existing copy target `/init.recovery.qcom.rc`.
+Do not call `mount_all` on the crypto fstab in RC: the backend handles userdata
+decryption and mounting. Confirm that init on the actual device loads this
+directory, and verify startup through logs; the RC file's presence alone is
+insufficient.
+
+### 8.2 `sepolicy/recovery.te`
+
+This is not a complete policy suitable for every vendor. The following provides
+a common starting point for reading existing keys and storage. Add Binder,
+service registration, device node, firmware, and entry-point permissions for
+the actual HAL domains. Step 10's explicit patches and the BoardConfig flag
+provide the platform neverallow exceptions for reading keys.
+
+```te
+recovery_only(`
+  r_dir_file(recovery, metadata_file)
+  r_dir_file(recovery, system_data_file)
+  r_dir_file(recovery, system_data_root_file)
+  r_dir_file(recovery, system_userdir_file)
+  r_dir_file(recovery, unencrypted_data_file)
+  r_dir_file(recovery, media_rw_data_file)
+  allow recovery { vold_metadata_file vold_data_file keystore_data_file }:dir { open read getattr search };
+  allow recovery { vold_metadata_file vold_data_file keystore_data_file }:file { open read getattr map };
+  allow recovery { system_data_file system_data_root_file system_userdir_file media_rw_data_file }:dir ioctl;
+  allowxperm recovery { system_data_file system_data_root_file system_userdir_file media_rw_data_file }:dir ioctl { 0x6616 0x6617 0x661a };
+')
+```
+
+Select appropriate HAL client attributes, `service_manager find`, and
+`binder_call` permissions for the services. Server domains also need their HAL
+server roles and registration permissions. Do not grant every domain access to
+every file to fix an AVC. Gatekeeper passthrough also requires consideration of
+vendor property isolation; granting all vendor permissions to coredomain
+Recovery is not a suitable shortcut.
+
+Ramdisk executables may retain a `rootfs` label. Even with an explicit init
+`seclabel`, review entry-point execution and domain transition permissions.
+Adding a `file_contexts` entry alone does not complete entry-point adaptation.
+For diting's current implementation, see the
+[common recovery.te](https://github.com/Night-stars-1/uwuaosp-diting/blob/main/cloud/diting_recovery_crypto/common/sepolicy/recovery.te).
+Its domains and device nodes belong to that QTI arrangement and must be
+replaced for other platforms.
+
+`recovery_only` is an m4 macro: even comments inside the block must not contain
+single quotes that break its quoting pairs. Restrict all new permissions to
+Recovery. Keep enforcing, retain neverallow rules, and do not add a data-wipe
+fallback for decryption failures.
+
+### 8.3 `file_contexts` and `service_contexts`
+
+Reuse existing correct labels; do not add conflicting duplicates. For a new
+executable path, add an entry based on reviewed device entry-point policy:
+
+```text
+/system/bin/mydevice-recovery-keymint u:object_r:<KEYMINT_EXEC_TYPE>:s0
+```
+
+Replace `<KEYMINT_EXEC_TYPE>` with an actual defined file type. The final
+ramdisk label, init context, and `.te` entry-point permissions must agree.
+Do not reuse incompatible vendor-image entry-point labels. `file_contexts`
+does not use the `.te` macro `recovery_only`.
+
+For new service instances, label the actual service name in `service_contexts`.
+For example, if a bridge adds a legacy SharedSecret instance not covered by
+existing policy:
+
+```text
+android.hardware.security.sharedsecret.ISharedSecret/legacy u:object_r:hal_sharedsecret_service:s0
+```
+
+This does not itself grant server registration or client access; the
+corresponding `.te` rules must also exist.
+
+### 8.4 `ueventd.crypto.rc` and firmware
+
+Check which nodes the normal system's security services actually access, and
+their owners, groups, and permissions in Recovery. Create node rules only where
+needed; do not make all of `/dev` readable and writable.
+
+QTI devices may need `/dev/qseecom`, DMA heap, or ION, for example, but the actual
+nodes, permissions, and groups depend on the device. Install the file at a
+separate Recovery path and import it from the **Recovery ueventd configuration
+that is actually loaded**, or merge the rules into device-managed configuration.
+Do not overwrite a copy target owned by another module. Init RC and ueventd RC
+are separate configurations and cannot substitute for each other.
+
+Firmware directories must exist in the actual Recovery ramdisk, with firmware
+mounts matching the current slot. If persist is required, verify its read-only
+mount and service behavior. Validate libdl loading, firmware/configuration files,
+and node permissions even after all `shared_libs` link successfully.
+
+## 9. Integrate with the product and BoardConfig
+
+### 9.1 Create `recovery-crypto/config.mk`
+
+```make
+# SPDX-License-Identifier: Apache-2.0
+MYDEVICE_RECOVERY_CRYPTO ?= false
+```
+
+This device flag defaults to disabled. After reviewing files and services, you
+may change the default to `true`, or export `MYDEVICE_RECOVERY_CRYPTO=true` for
+a temporary build. Both the product and BoardConfig reference this file so
+packaging and policy remain aligned. The device chooses this variable name.
+
+### 9.2 Create `recovery-crypto/crypto.mk`
+
+This example uses the guide's native AIDL Gatekeeper arrangement. First complete
+step 5's actual KeyMint, Gatekeeper, and dependency module declarations.
+`mydevice_rec_libvendorcrypto` is the placeholder library from above; replace it
+with the actual dependencies. Adjust the module list if using an authentication
+bridge.
+
+```make
+# SPDX-License-Identifier: Apache-2.0
+include device/acme/mydevice/recovery-crypto/config.mk
+
+ifeq ($(MYDEVICE_RECOVERY_CRYPTO),true)
+SOONG_CONFIG_NAMESPACES += recovery_crypto mydevice_recovery_crypto
+SOONG_CONFIG_recovery_crypto += android17
+SOONG_CONFIG_recovery_crypto_android17 := true
+SOONG_CONFIG_mydevice_recovery_crypto += device_enabled
+SOONG_CONFIG_mydevice_recovery_crypto_device_enabled := true
+
+PRODUCT_SOONG_NAMESPACES += \
+    device/acme/mydevice/recovery-crypto \
+    vendor/acme/mydevice
+
+PRODUCT_PACKAGES += \
+    librecovery_crypto_android17 \
+    mydevice_rec_crypto_config \
+    mydevice_rec_crypto_fstab \
+    mydevice_rec_crypto_manifest \
+    mydevice_rec_crypto_init \
+    mydevice_rec_keymint \
+    mydevice_rec_gatekeeper \
+    mydevice_rec_libvendorcrypto
+endif
+```
+
+The vendor modules and authentication bridge use a **device-specific Soong
+flag**, separate from the shared backend flag. Enabling the Android 17 backend
+on another device therefore does not enable this device's proprietary modules.
+The existing diting example uses the shared android17 condition; new devices
+should not bind all their proprietary modules to that global flag.
+
+These names are not generated automatically: step 4's `Android.bp` defines the
+four configuration modules, step 5's vendor declarations define services and
+vendor libraries, and the existing `Android.bp` in this directory defines the
+backend.
+
+`PRODUCT_PACKAGES` uses module `name`; init uses service names and installed
+executable paths; conf/VINTF uses HAL interface instances. These four kinds of
+names are not interchangeable. This list does not select
+`recovery_crypto_android17_test`, a normal Android test module run separately
+by maintainers.
+
+If using the Qualcomm common layer, append its actual namespace to
+`PRODUCT_SOONG_NAMESPACES` and select the actual bridge module and all runtime
+dependencies. Put new `PRODUCT_COPY_FILES` entries under the same device flag,
+and verify that their Recovery destinations do not conflict with existing files.
+
+Add this to the existing device product file, such as
+`device/acme/mydevice/device.mk`:
+
+```make
+$(call inherit-product, device/acme/mydevice/recovery-crypto/crypto.mk)
+```
+
+### 9.3 Create `recovery-crypto/BoardConfig.mk`
+
+```make
+# SPDX-License-Identifier: Apache-2.0
+include device/acme/mydevice/recovery-crypto/config.mk
+
+ifeq ($(MYDEVICE_RECOVERY_CRYPTO),true)
+BOARD_VENDOR_SEPOLICY_DIRS += device/acme/mydevice/recovery-crypto/sepolicy
+BOARD_SEPOLICY_M4DEFS += recovery_crypto_android17=true
+endif
+```
+
+Add this to the existing device `BoardConfig.mk`:
+
+```make
+include device/acme/mydevice/recovery-crypto/BoardConfig.mk
+```
+
+If common-layer policy is needed, add its actual policy directory under the
+same condition. Do not add the device flag or these includes to Recovery
+product configuration shared by every device.
+
+The four configuration points have separate responsibilities:
+
+| Location | Responsibility |
+| --- | --- |
+| Device flag `MYDEVICE_RECOVERY_CRYPTO` | Controls this device's integration |
+| `SOONG_CONFIG_recovery_crypto_android17` | Enables the shared Android 17 backend |
+| `SOONG_CONFIG_mydevice_recovery_crypto_device_enabled` | Enables only this device's vendor modules and authentication bridge |
+| `BOARD_SEPOLICY_M4DEFS` | Enables the Recovery-only key-read exceptions in the platform patches |
+
+The four ordinary `prebuilt_etc` modules above do not inherit the authentication
+bridge's `enabled` flag. Their installation is selected by the product condition
+here. Keep device-specific modules and their side effects within that device's
+enable condition.
+
+## 10. Prepare platform dependencies and key-read patches
+
+Enter the Android source root first. Replace `/path/to/android` below with the
+actual path. Run each command separately and stop on failure before compiling.
+
+Preview:
 
 ```bash
 python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android
+```
+
+Apply:
+
+```bash
 python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android --apply
+```
+
+Check:
+
+```bash
 python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android --check
 ```
 
-None of these commands compiles, enables a device profile, accesses a phone, or
-reads real user keys. No source hash manifest is required. When updating Android,
-maintainers must check that the SP, vold and keystore2 formats still match the
-backend. Dependency declarations and policy patch conflicts are checked separately.
+The helper adds AIDL, analyzer, and SQLite Recovery dependency declarations
+and checks/applies explicit `system/sepolicy` patches. It does not generate
+device HAL configuration, deploy vendor libraries, enable a device, compile,
+or flash. It does not require a source hash manifest or deployment record JSON.
 
-The helper also adds `recovery_available: true` to the reviewed
-`aidl-analyzer-main` static library in `system/tools/aidl/Android.bp`: AIDL
-propagates interface Recovery availability to generated C++ analyzers, whose
-static dependency needs the same image variant. This does not select an analyzer
-for installation in the Recovery image or change normal-system code. A changed
-analyzer runtime declaration is refused for review before any writes.
+After a platform upgrade, maintainers must confirm that SP, vold, and keystore2
+formats still match the backend implementation. Resolve dependency declaration
+or policy patch conflicts against the actual source; the script does not
+overwrite unknown changes.
 
-The dependency changes belong to `hardware/interfaces`, `system/tools/aidl`
-and `external/sqlite`.
-Commit/manifest-track them in a release fork, or reapply the helper after syncing
-those projects. The device adaptation belongs to the device/vendor projects.
-`repo sync -c bootable/recovery` updates the generic backend and helper without
-editing either the device adaptation or those other projects. It does not itself
-run this helper or sync the other projects.
+These changes belong to `hardware/interfaces`, `system/tools/aidl`,
+`external/sqlite`, and `system/sepolicy`. When maintaining a distribution,
+commit them to the corresponding forks and track them in the manifest, or
+review and reapply them after syncing those projects. See the
+[key-access patch](../../tools/crypto/patches/android17-recovery-key-access.patch)
+for its scope.
 
-The helper also checks/applies a complete explicitly reviewed patch from
-`tools/crypto/patches/` to `system/sepolicy`. The AOSP variant is
-`android17-recovery-key-access.patch`; the uwuAOSP variant is
-`android17-uwu-recovery-key-access.patch`, reviewed against revision
-`b41cbf3b46882139654574fe46ca5cf8175bf8a5`. The latter preserves uwuAOSP's
-existing `apexd` metadata exceptions and all unrelated platform rules.
-It uses Git against isolated copies to verify either the original or fully
-patched state, preserves compatible unrelated edits, and refuses conflicts or
-partial application. No regular expression generates or rewrites policy rules.
-Review inputs and patch hashes are in the sibling JSON manifests. Exactly one
-complete variant must match; the helper never combines hunks from different
-variants. An unknown change to a key-isolation rule still requires review.
+## 11. Checks before building and after image packaging
 
-This patch alone grants no access. An adapted device must explicitly set the
-following in its **BoardConfig**, in the same conditional as its crypto policy:
+Confirm that the device flag is enabled, all module names resolve, and vendor
+dependencies provide the correct Recovery variants. The maintainer then selects
+the actual product/release/variant through the ROM's build entry point and
+builds Recovery. This guide does not start builds automatically or provide a
+flashing command suitable for every partition layout.
 
-```make
-BOARD_SEPOLICY_M4DEFS += recovery_crypto_android17=true
-```
+**In current uwuAOSP, the Soong-only `recoveryimage` target may produce only a
+compressed ramdisk.** A file named `recovery.img` is not necessarily a complete
+flashable image. Package it according to the device's header, kernel/ramdisk
+partitions, AVB, rollback settings, and current slot layout. Diting's packager
+applies only to its reviewed kernel-less v4 layout, not other devices.
 
-The exception expands only when both this flag and `target_recovery` are true.
-Normal Android and non-opt-in Recovery retain the original key-isolation
-semantics. Opt-in Recovery can read existing regular-file keys/databases and
-add/query kernel fscrypt keys. Writes, execution, non-regular key-file access,
-setting encryption policies and removing encryption keys remain forbidden.
-Read-only access trusts Recovery code with encrypted key material; the patch
-does not isolate the UI and worker into separate SELinux domains.
+Check the actual ramdisk/image to be flashed, rather than potentially stale
+product outputs:
 
-Keep this explicit patch in a platform SELinux fork for a maintained release,
-or reapply after syncing `system/sepolicy`; device-specific permissions and the
-flag stay in the device tree. Syncing `bootable/recovery` does not change either
-project. The helper never compiles or flashes anything.
+| Content | Actual location in this example |
+| --- | --- |
+| Backend | `/system/lib64/librecovery_crypto_backend.so`; use the corresponding lib directory for 32-bit |
+| Worker | `/system/bin/recovery_crypto_worker` |
+| Backend configuration | `/system/etc/recovery.crypto.conf` |
+| Crypto fstab | `/system/etc/recovery.crypto.fstab` |
+| VINTF | `/system/etc/vintf/manifest/mydevice-recovery-crypto.xml` |
+| Init RC | `/system/etc/init/init.recovery.mydevice-crypto.rc` |
+| KeyMint / Gatekeeper | The actual executable paths configured in RC |
+| All libraries, firmware directories, configuration, and node rules | Verify each against the dependency closure and runtime loading paths |
+| Policy and properties | Actual file/process labels and matching system/vendor security patch properties |
 
-## Deliberate limits
+The worker architecture must match Recovery. The backend and configuration must
+be regular files owned by root, without group or other-user write access. The
+current private IPC is v2; rebuild Recovery and the worker together. Do not fake
+security patch levels to accept old keys, or automatically upgrade blobs in
+Recovery.
 
-- Requires an actual AIDL KeyMint implementation. HIDL-only Keymaster devices
-  need a separate compatibility adapter; this code does not start keystore2's
-  compatibility daemon or guess a bridge.
-- HIDL Gatekeeper 1.0, Weaver 1.0 and Keymaster 4.0/4.1 SharedSecret negotiation
-  are supported alongside AIDL. HIDL HALs need Recovery passthrough libraries.
-  A vendor offering only a service/factory needs a reviewed device-tree bridge;
-  a manifest alone does not supply a passthrough implementation.
-- Uses the reviewed keystore2 live client-key schema with `blobentry.state`,
-  SELinux domain 2, locksettings namespace 103 and known UUID encodings. Legacy
-  APP-namespace keys, super-encrypted or boot-level-bound blobs and unknown blob
-  metadata are refused. No migration or key upgrade runs in Recovery.
-- Supports raw, KeyMint `wrappedkey_v0` and upstream block-crypto `wrappedkey`
-  runtime conversion. Upstream wrapped keys require the real kernel ioctl.
-  Legacy dm-default-key option format 1, `ice` fstab aliases, multi-device userdata
-  and logical userdata require a separate adapter.
-- Storage binding seed profiles are currently refused (`storage_binding=none`
-  requires the maintainer to verify that the normal platform does not use one).
-  Do not insert a guessed/public seed or bypass a seed check.
-- Internal users only; UI currently exposes user 0. No work-profile challenge,
-  adoptable storage, escrow-token unlock, grids outside 3x3..6x6 or non-ASCII
-  on-screen password keyboard is provided by this change.
-- Read-only mounting deliberately refuses filesystems needing recovery. It does
-  not make a damaged/unclean filesystem readable by writing to it.
-- Framework credential/IPC buffers are locked and excluded from dumps. Derived
-  byte buffers and owned Binder copies are wiped; compiler/HAL/Binder/OpenSSL
-  internal allocations are not a guarantee of complete memory locking. Worker
-  core dumps are disabled. This is not certification against physical memory
-  acquisition or buggy vendor logging.
-
-## Validation to perform before shipping
+## 12. Diagnostics and device validation
 
 ### Locating an unlock failure
 
-The Android 17 backend appends typed diagnostic checkpoints to the existing
-`/tmp/recovery.log`. This works without logd/logcat and leaves worker stdout and
-stderr redirected to `/dev/null`. Only a fixed checkpoint name, public result
-code and numeric errno/Binder/HAL code are emitted. Credentials, pattern cells,
-user IDs, file paths, key material, tokens and vendor error strings are excluded.
-The logger refuses symlinks, non-regular/non-root-owned files and logs at least
-4 MiB; it never creates a log. Logging failure preserves the operation result
-and errno. These diagnostic changes still need Android compilation and device
-validation by the maintainer.
+After entering the new Recovery, first check the init services you defined.
+Run each command separately on the computer, for example:
 
-After building/flashing a Recovery containing the diagnostics, make one unlock
-attempt on the phone, then collect the log **before rebooting Recovery**:
+```bash
+adb -d shell getprop init.svc.mydevice-recovery-keymint
+```
+
+```bash
+adb -d shell getprop init.svc.mydevice-recovery-gatekeeper
+```
+
+For an authentication bridge or TEE listener, use its actual init service name.
+An empty value generally means no corresponding service state; `stopped` means
+the service is not currently running. Use init logs to distinguish a configuration
+that was not loaded, startup failure, or process exit. `running` alone does not
+prove that the HAL's key operations work.
+
+Try unlocking once on the device, then retrieve the log **before rebooting
+Recovery**:
 
 ```bash
 adb -d pull /tmp/recovery.log recovery-decrypt.log
 ```
 
-Each unlock session starts with the coarse `services`, `metadata`, `de_keys` and
-`credential_type` results. CE results include the substeps below, followed by
-`sp_unlock` and, if that succeeds, `ce_load`. A later summary failure may repeat
-the result; use its preceding substep failures to find the cause. CE rotation
-can examine more than one stored key candidate without retrying authentication,
-so an earlier candidate failure does not imply final failure if `ce_load` succeeds.
-
-| Checkpoint | Operation to investigate |
+| Failure stage | What to check first |
 | --- | --- |
-| `protector_key` | Reading the current SP protector key/security level from keystore |
-| `credential_format`, `stretch` | Input encoding and stored scrypt parameters |
-| `gatekeeper_input`, `gatekeeper_verify`, `gatekeeper_token`, `weaver_read` | Pre-call bounds, hardware verification, throttling and token format |
-| `keymint_begin`, `keymint_finish`, `secureclock` | KeyMint key use, authenticated decrypt and timestamp generation |
-| `sp_discardable`, `sp_software_decrypt`, `sp_format`, `sp_handle`, `sp_derive` | SP state, unwrap, main-user verification and FBE subkey derivation |
-| `ce_key_directories`, `stored_key_read`, `stored_key_decrypt` | Existing CE key candidates and their software wrapping |
-| `storage_export` | Hardware-wrapped storage key conversion |
-| `fscrypt_policy`, `fscrypt_descriptor`, `fscrypt_identifier` | Kernel policy/key matching |
-| `fscrypt_add_key`, `fscrypt_status` | Kernel key installation and presence |
+| `services` | Conf instances, service startup, VINTF, all SharedSecret participants, Binder/SELinux, and firmware |
+| `metadata` | Crypto fstab, partition paths, kernel dm-default-key/hardware-key support, and KeyMint operations |
+| `de_keys` | Read access to existing DE keys, kernel fscrypt, and matching directory policies |
+| `credential_type` | Locksettings/SP formats against the currently reviewed source baseline |
+| `gatekeeper_verify` / `weaver_read` | Authentication HALs, input formats, hardware errors, or throttling |
+| `sp_unlock` | Earlier SP substages, protector keys, KeyMint, and token processing |
+| `ce_load` | Candidate CE keys, wrapped-key conversion, kernel key installation, and media directory policy |
 
-`result=0` means success; 1 unsupported, 2 unavailable service, 3 missing existing
-key/state, 4 required key upgrade, 5 credential rejected, 6 hardware throttled,
-7 other I/O/format/cryptographic failure. `source=hal`, `binder` and `errno` identify
-the numeric code's namespace; `source=none code=0` means there is no raw code,
-**not** that the operation succeeded. For example, `keymint_begin result=7
-source=hal code=...` locates a KeyMint rejection; it is not by itself evidence of
-a wrong pattern. No diagnostic automatically retries, enrolls, upgrades or
-rewrites keys.
+`result=0` means success; 1 unsupported, 2 service unavailable, 3 existing
+key/state missing, 4 key upgrade required, 5 credential rejected, 6 hardware
+throttling, and 7 other I/O, format, or cryptographic errors.
+`source=none code=0` is not a success marker. See the
+[diagnostic stage definitions](diagnostic.h) for the complete substages.
 
-Gatekeeper's existing handle may have legacy version 0. The reviewed
-[`GateKeeper::Verify`](https://android.googlesource.com/platform/system/gatekeeper/+/5b5e75b5bda9fccbc3132e9624cb25286babdaac/gatekeeper.cpp)
-rejects versions above its supported maximum, not version 0. The backend passes
-that legacy handle to the configured HAL without reenrollment, retains its
-size/upper-version bounds and validates the resulting hardware auth token and
-SID as before. A valid input shape is not proof of successful authentication.
+Continue diagnosis using the available init, kernel, SELinux AVC, and vendor
+service logs. Diagnostics do not depend on logcat. Do not log PINs, patterns,
+keys, or authentication tokens, or retry credentials automatically. After a
+failure, also verify that cancel, ADB sideload, reboot, and ordinary menus work.
 
-The pure formatter fixtures in `tests/native_test.cpp` check code/namespace
-formatting, numeric bounds and invalid inputs. They do not write a log or call a
-HAL. Passing source checks does not validate Recovery logging or decryption.
+Device validation must cover the supported no-lock, PIN, password, and pattern
+paths; incorrect credentials and throttling; reading file names and contents
+after success; and continued use of the original credential after returning to
+Android. The current UI shows only user 0, supports 3×3 through 6×6 patterns,
+and limits on-screen password input to basic ASCII. Device conf cannot expand
+these limits.
 
-### Maintainer checks
+## 13. Unadapted devices, temporary disabling, and later repo sync
 
-The host deployment tests can be run without compiling:
+Devices without product and BoardConfig integration do not enable the backend
+automatically by syncing Recovery. This example's `config.mk` defaults to false.
+To disable it temporarily in the build environment:
 
 ```bash
-python3 bootable/recovery/tools/crypto/test_prepare_android17.py
-python3 bootable/recovery/tools/crypto/test_policy_patch.py
+export MYDEVICE_RECOVERY_CRYPTO=false
 ```
 
-The policy tests apply the patch only to temporary public fixtures and use m4
-to verify all four opt-in/Recovery combinations, unchanged normal isolation and
-retained removal/write guards. They do not compile a SELinux binary policy.
+Devices that change the shared default to true must still keep this disable
+condition. Disabling must cover added security services, firmware mounts, and
+permissions as well as the backend package.
 
-The maintainer should compile/run `recovery_crypto_android17_test` in the normal
-Android native-test environment, which tests
-SP versioned KDFs, stored scrypt parameters, authenticated AES-GCM, truncated
-PasswordData and committed/checksummed WAL handling using synthetic fixtures.
-No native test calls a HAL or reads a real credential/key directory.
-The test is deliberately not a Recovery image module: platform gtest has no
-Recovery variants. It uses the same backend sources with normal Android
-dependencies; the production backend remains `recovery: true`. These fixture
-tests do not validate Recovery linking, HAL operation or device decryption.
+Commit device files, vendor declarations, and platform helper changes to their
+respective projects. Later, from the Android source root, run:
 
-ScreenRecoveryUI asks for patterns on a touchable 3-by-3 through 6-by-6 grid, with
-selected dots, connecting strokes and explicit Unlock/Clear/Cancel controls.
-Starting a new stroke on a dot clears the previous drawing; a pattern needs
-at least four dots and finger-up before explicit submission. Crossing an
-unvisited cells on rows, columns and 45-degree diagonals follows the reviewed
-uwuAOSP LockPatternView rule. Volume keys navigate the same grid
-and controls; Power selects the highlighted target when touch is unavailable.
-Custom/stub UIs can decline the optional pattern API without affecting sideload.
-On ordinary interactive Recovery entry, an installed backend now starts the
-metadata/DE preparation and opens this credential UI before the home menu.
-Cancel or failure returns to the home menu. Selecting an internal-storage ZIP
-later reuses verified unlocked storage or lets the user try unlocking again.
-Command-driven OTA/sideload, wipe, rescue, just-exit and headless boots do not
-wait for credential input. Startup behavior still needs maintainer build and
-device verification; this change does not itself fix a backend unlock failure.
-The UI views the caller's locked credential memory and neither logs nor copies
-the pattern into a text/menu string. Cancelling clears it and leaving the page
-redraws both framebuffer pages. Ordinary menus retain their swipe scrolling.
-Synthetic grid/midpoint/sparse-motion/layout fixtures are included in
-`tests/unit/screen_ui_test.cpp`; no test attempts real credential verification.
+```bash
+repo sync -c bootable/recovery
+```
 
-The backend reads `lock_pattern_size` with the read-only locksettings snapshot
-helper, after metadata and DE restoration.
-An absent setting defaults to 3, as on standard AOSP installs. A failed database
-read, duplicate/malformed value or unsupported size stops before credential
-submission; there is no manual override or automatic trial of other sizes.
-Each cell encodes as one byte `row * gridSize + column + '1'`, including indexes
-above 8. The optional `recovery_crypto_get_pattern_size_v1` export leaves the
-required v1 backend ABI structure intact. A custom backend lacking the export
-retains its old 3x3 contract. The private worker protocol is v2, so Recovery and
-its worker must be rebuilt together.
+This updates only the generic code. It neither overwrites device/vendor
+adaptations nor automatically applies the helper. Recheck adaptations after
+updating other projects. Do not copy device-specific patches into
+`bootable/recovery` or discard existing adaptations with repository-wide
+reset/clean operations.
 
-Grid-size, per-user/default/error and encoding fixtures are in
-`crypto/android17/tests/native_test.cpp`; protocol bounds/duplicate fixtures are
-in `crypto/tests/protocol_test.cpp`. These new native tests have not been run;
-source parsing and layout previews do not verify authentication on a device.
+## Using the existing diting adaptation
 
-For each enabled device, test empty LSKF, PIN, password, pattern, Weaver and
-Gatekeeper paths as applicable, wrong credentials, hardware throttle, missing
-services/keys, unsupported/upgrade-required blobs, failure followed by ordinary
-ADB sideload, and returning to Android with unchanged credentials. Verify
-fscrypt key/policy matches, file names and file contents after successful unlock.
-Compilation alone is not evidence of decryption; source-only checks are less.
+This section applies only to the diting preparation repository; it is not a
+generic installer for the new-device example above. With Android sources
+synced and the preparation repository up to date, preview from the preparation
+repository directory:
 
-Primary design references:
+```bash
+python3 cloud/install_diting_recovery_crypto.py /home/android/uwu-diting
+```
 
-- https://source.android.com/docs/security/features/encryption/file-based
-- https://source.android.com/docs/security/features/encryption/metadata
-- https://source.android.com/docs/security/features/encryption/hw-wrapped-keys
+Apply:
 
-## Optional writable media export
+```bash
+python3 cloud/install_diting_recovery_crypto.py /home/android/uwu-diting --apply
+```
 
-A Recovery MTP `VID:PID:rw` profile changes the mount lifecycle; see
-[the MTP guide](../../mtp/README.md). The default without this trusted profile
-remains read-only. With the opt-in, userdata journal/roll-forward recovery is
-allowed at its initial ro mount; only after CE key recovery succeeds is an rw
-remount attempted. Keys and lock settings remain protected by their read-only
-access rules. This path requires device filesystem and SELinux validation.
+Check:
+
+```bash
+python3 cloud/install_diting_recovery_crypto.py /home/android/uwu-diting --check
+```
+
+Diting's `--check` checks actual installed files and dependencies, without
+comparing template contents or requiring deployment JSON. You can build after
+editing adaptation files directly in the device tree. Changes to templates in
+the preparation repository are deployed into Android sources only when you
+explicitly run `--apply`, which backs up files before overwriting them.
+`--remove` detaches product/BoardConfig integration and preserves adaptation
+files.
+
+The maintainer then explicitly builds:
+
+```bash
+SOONG_ONLY=true BUILD_JOBS=16 bash cloud/build.sh /home/android/uwu-diting recovery
+```
+
+`cloud/build.sh` belongs to the diting **preparation repository**, not
+`bootable/recovery`. After deployment, the build entry point only checks the
+adaptation; it does not automatically sync or deploy it. See the
+[diting adaptation documentation](https://github.com/Night-stars-1/uwuaosp-diting/blob/main/cloud/DITING_RECOVERY_CRYPTO.md)
+for full instructions and the managed file list.
+The preparation repository is usually `/workspace` in CNB and
+`/home/uwuaosp-diting-prep` on the old server. Use the actual source path for
+your environment.
+
+## Further references
+
+- [General framework and custom backend ABI](../README.md)
+- [Minimal Android.bp template](device.example.bp) and [minimal product selection template](device.example.mk)
+  are starting points, without complete HAL/policy integration; complete them
+  using the steps in this guide.
+- [Configuration field example](profile.example.conf)
