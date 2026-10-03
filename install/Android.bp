@@ -61,7 +61,7 @@ cc_defaults {
 
 cc_test_host {
     name: "recovery_image_format_test",
-    srcs: ["image_format_test.cpp"],
+    srcs: ["image_format_test.cpp", "image_flash_policy_test.cpp"],
     cpp_std: "c++20",
     cflags: ["-Wall", "-Wextra", "-Werror"],
 }
