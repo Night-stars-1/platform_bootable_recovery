@@ -1,152 +1,630 @@
-# Android 17 Recovery 解密后端与设备适配
+# Android 17 Recovery 设备解密适配指南
 
-[English](README.md) | 简体中文 | [通用解密框架](../README.zh-CN.md)
+[English](README.md) | 简体中文 | [技术参考](REFERENCE.zh-CN.md) | [通用框架](../README.zh-CN.md)
 
-本目录提供 Android 17 **已有密钥恢复**的后端实现，包含 metadata、DE、Synthetic
-Password 和 CE 解锁链路。它不是 `../examples` 中只返回“不支持”的接口示例。
-后端默认关闭，只有设备显式适配后才会启用。
+本文面向设备树维护者：说明需要创建哪些文件、内容从哪里获取、怎样定义模块、
+怎样接入产品，以及如何检查生成的 Recovery。按步骤完成源码适配后，仍需要
+编译和真机验证；本指南不承诺任意 Android 17 设备都能直接解密。
 
-**源码实现、部署检查和编译成功，都不能代替实际设备解密验证。** 发布镜像前，
-维护者需要核对自己的平台版本、厂商安全服务与加密格式，并完成真机测试。
-编译由维护者执行；Python 部署测试和合成测试数据只用于检查相应逻辑。
+示例统一使用 `device/acme/mydevice`、`vendor/acme/mydevice` 和模块前缀
+`mydevice_rec_`。请替换为自己的设备路径和唯一模块名前缀。本文的示例假设有
+**真实 AIDL KeyMint、AIDL Gatekeeper，以及 KeyMint 进程提供的 SecureClock /
+SharedSecret**；服务组合不同的设备按后面的分支调整。示例中的厂商库、服务路径、
+策略域和 fstab 必须来自本设备，不能仅改设备名就直接使用。
 
-## 新设备从哪里开始
+## 0. 先判断是否能使用这个后端
 
-设备适配放在 `bootable/recovery` 之外：
+开始写设备文件前，确认以下条件：
 
-```text
-device/<厂商>/<设备>/recovery-crypto/
-  Android.bp
-  recovery.crypto.conf
-  recovery.crypto.fstab
-  init*.rc
-  VINTF 片段
-  sepolicy/
-  厂商依赖的 Recovery 打包声明
+| 条件 | 从哪里确认 | 不满足时怎么办 |
+| --- | --- | --- |
+| 平台为当前后端审查的 Android 17 格式 | 本目录 `source-review.json` 和当前平台源码 | 重新审查格式及依赖，不能只替换哈希跳过检查 |
+| 有真实 AIDL KeyMint | 正常系统 VINTF、HAL 可执行文件、init RC | 只有 HIDL Keymaster 时需要另行实现兼容适配 |
+| 能获取实际 Gatekeeper / Weaver 实现 | 正常系统 VINTF、服务、passthrough 库及 SP 使用路径 | 缺失时不能完成对应凭据验证 |
+| 内核支持设备实际的 fscrypt、metadata 加密和硬件封装密钥路径 | 当前内核配置、驱动、正常系统 fstab | 先处理内核支持，不靠修改 conf 绕过 |
+| 平台不使用本后端尚未支持的 storage-binding seed | 当前平台的密钥生成/恢复代码和设备配置 | 需要扩展后端；不能随意填写 `storage_binding=none` |
+
+收集服务名称时，可在正常 Android 启动且已授权 ADB 的手机上查看 AIDL 服务：
+
+```bash
+adb -d shell service list
 ```
 
-建议按以下顺序接入：
+服务清单只是发现入口，还要对照正常系统的 VINTF、init RC 和已提取程序确认。
+HIDL 另查其 manifest、实现库及正常系统可用的 lshal 信息，不把这条命令当作
+完整 HAL 清单。对厂商 ELF 使用工具链的 `llvm-readelf -d` 查看 `DT_NEEDED`，
+例如在编译服务器已配置该工具路径后：
 
-1. 核对正常系统的 `/metadata`、`/data` fstab、内核加密能力，以及当前 ROM
-   使用的密钥和 Synthetic Password 格式。
-2. 核对实际 KeyMint、Gatekeeper、Weaver、SecureClock、SharedSecret 服务和
-   固件依赖；确认它们能在 Recovery 环境运行。
-3. 参考 [Android.bp 模板](device.example.bp)、[产品配置模板](device.example.mk)
-   和 [后端配置示例](profile.example.conf)，在设备树创建自己的模块和配置。
-4. 打包完整厂商库依赖，添加 init、Recovery VINTF、设备节点和 SELinux 规则。
-5. 准备平台 Recovery 依赖和密钥读取策略，显式启用本设备的后端。
-6. 检查实际镜像内容，编译后通过诊断日志逐阶段验证解密。
-
-高通公共层可以共享认证桥源码及基础规则，但不能替代设备的库选择、服务实例、
-fstab、固件路径和启动流程。已有的
-[diting 适配说明](https://github.com/Night-stars-1/uwuaosp-diting/blob/main/cloud/DITING_RECOVERY_CRYPTO.md)
-可作为实例，不能直接复制到所有高通设备。
-
-## 已实现的解锁链路
-
-术语：DE 是设备加密存储，CE 是凭据加密存储，SP 是 Synthetic Password
-（合成密码），LSKF 是锁屏知识因子，即用户的 PIN、密码或图案。
-
-1. 读取 ramdisk 中 root 拥有且不可写的配置，连接指定的 AIDL KeyMint，检查
-   安全级别，协商配置中的 SharedSecret 参与者，再连接 AIDL 或 HIDL
-   Gatekeeper/Weaver。AIDL 使用非 lazy 的 `checkService`；当前审查的 Recovery
-   libhidl 通过本地 passthrough 实现解析 HIDL，不使用 hwservicemanager。
-   不生成 KeyMint 密钥、不注册或删除凭据。若 keystore2 守护进程同时运行，
-   后端拒绝继续，避免覆盖另一个协商者的共享密钥协议状态。
-2. 读取已审查的 crypto fstab，按需挂载 metadata，读取**已有**的 vold v1 密钥
-   目录。使用原始 secdiscardable application ID 经 KeyMint 解密，为本次启动
-   转换硬件封装密钥，创建只读 `dm-default-key` 映射。默认只读挂载 userdata，
-   不运行 fsck、日志重放、F2FS 前滚恢复或格式化；可写 MTP 的显式选项见文末。
-3. 从 `/data/unencrypted/key` 恢复系统 DE 密钥，再恢复所选用户的 DE 密钥。
-   使用 `FS_IOC_ADD_ENCRYPTION_KEY` 安装到内核，核对密钥标识/描述符与实际
-   目录加密策略，并确认密钥存在。
-4. 从私有 locksettings 数据库快照读取当前 `sp-handle`，解析 PasswordData
-   和 protector 状态，确定真实凭据类型。支持 PIN、密码字节和 Android 图案
-   单元编码。当前空 LSKF protector 使用填充后的 `default-password` 路径，
-   旧 protector 保留存储的 scrypt 参数。缺少 `.pwd` 文件不能单独证明没有
-   锁屏凭据，存储的 password quality 还必须明确为 0。
-5. 经 Gatekeeper（包括其虚拟用户 ID 偏移）或 protector 的 Weaver 槽验证
-   LSKF，保留硬件错误与限流，不重新注册凭据。将 Gatekeeper 返回的认证令牌
-   用于 KeyMint，必要时使用 SecureClock。从已审查的 keystore2 数据库读取
-   已有 SP protector 密钥，按正确的 v1/v2/v3 顺序解封 SP；不导入密钥、迁移
-   namespace 或写数据库。
-6. 保持 SP 的 ASCII 十六进制表示，使用 v1/v2 SHA-512 或 v3 SP800-108
-   HMAC-SHA256 派生 `fbe-key`，恢复已有 CE 密钥。轮换的 `cx*` 候选不会被
-   重命名、固定或删除。核对安装的密钥与 `/data/media/<user>` 的加密策略。
-   通用框架还会独立检查挂载、内核密钥状态与目录可读性，随后才打开 ZIP 浏览器。
-
-SQLite 数据库及 WAL 通过不跟随符号链接的文件描述符读取。只将已提交且校验和
-有效的 WAL 帧应用到私有内存映像，不发布未提交或不完整的帧。SQLite 使用
-`:memory:` 和只读反序列化，不操作原数据库或 SHM。发现非空的 hot rollback
-journal 时停止，不执行数据库恢复；读取快照前 userdata 必须处于只读状态。
-
-后端不包含破坏性回退。待升级密钥、`KEY_REQUIRES_UPGRADE`、缺失密钥、损坏的
-protector、服务不可用或格式不支持，都会返回 ABI 错误并保留原有密钥与凭据。
-已成功或部分安装的内核密钥保留到重启；worker 释放自己的秘密和句柄，不驱逐
-这些密钥。worker 卡死或崩溃仍受父框架的截止时间约束。
-
-device-mapper 的私有表加载与激活请求使用 libdm 稳定的 `4.0.0` 请求 ABI，
-遵循 `DeviceMapper::InitIo`，不直接采用构建主机 Linux 头文件中的较新版本。
-映射保持只读，ioctl 缓冲区会清除；映射表及密钥不会进入 libdm 的表调试日志。
-
-## 配置与显式启用
-
-后端及 HAL/SQLite 依赖在 Soong 模块层面默认关闭。同步本目录不会为其他产品
-启用解密或增加厂商服务。
-
-为设备模板中的模块选择唯一名称。每个产品只安装一个实际文件名为
-`librecovery_crypto_backend` 的后端。配置与独立 fstab 安装到 Recovery ramdisk：
-
-```text
-/system/etc/recovery.crypto.conf
-/system/etc/recovery.crypto.fstab
+```bash
+llvm-readelf -d /path/to/vendor-security-service
 ```
 
-自定义 crypto fstab 也必须位于 `/system/etc/`，不能从 userdata 或 metadata
-选择配置文件。独立 crypto fstab 仅供可选后端使用，不替换普通 Recovery 分区表。
+把路径替换为实际服务文件，递归检查列出的厂商依赖。
 
-**使用正常系统的真实加密选项，不能照搬旧 Recovery 的 `ice,wrappedkey`。**
-以下只演示格式，不代表任何设备都应采用这些选项：
+不要从手机复制真实密钥或锁屏数据库到仓库。适配依据是平台源码、分区配置、
+HAL 与合法获取的厂商二进制；输入凭据在手机上进行。
+
+## 1. 要创建哪些文件
+
+设备适配目录建议如下。真实文件名要与后面的 `src`、include 和安装声明一致：
 
 ```text
-fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0
-keydirectory=/metadata/vold/metadata_encryption
-metadata_encryption=aes-256-xts:wrappedkey_v0
+device/acme/mydevice/
+  BoardConfig.mk                  ← 已有文件，增加一个 include
+  device.mk                       ← 已有产品文件，增加一个 inherit-product
+  recovery-crypto/
+    config.mk                     ← 本设备开关，两处接入共用
+    crypto.mk                     ← 选择要打包的模块
+    BoardConfig.mk                ← 接入设备策略与平台密钥读取开关
+    Android.bp                    ← 定义配置文件模块；需要时定义认证桥
+    recovery.crypto.conf          ← 后端使用哪个安全服务
+    recovery.crypto.fstab         ← metadata / userdata 配置
+    manifest.xml                  ← Recovery 安全 HAL 声明
+    init.recovery.mydevice-crypto.rc ← 安全服务的启动流程
+    sepolicy/
+      recovery.te                 ← 设备所需权限
+      file_contexts               ← 仅在需要新增文件标签时创建
+      service_contexts            ← 仅在需要新增服务实例标签时创建
+    ueventd.crypto.rc             ← 仅在现有节点权限不足时创建并接入
+
+vendor/acme/mydevice/
+  Android.bp                      ← 通常已有 namespace，不覆盖自动生成内容
+  proprietary/
+    Android.bp                    ← 声明 Recovery 专用厂商模块，不覆盖已有内容
+    vendor/bin/hw/...             ← 已提取的安全服务
+    vendor/lib64/...              ← 已提取的依赖库
 ```
 
-只复制设备真实的 `/metadata`、`/data` 条目，保留其分区路径、文件系统和挂载
-参数。准确配置所有需要的 KeyMint、Gatekeeper、Weaver、SecureClock 和
-SharedSecret 参与者：
+| 文件 | 是否需要 | 作用与内容来源 |
+| --- | --- | --- |
+| `recovery.crypto.conf` | 必需 | 后端服务选择；来源为实际 HAL 和正常 keystore2 的 SharedSecret 协商参与者 |
+| `recovery.crypto.fstab` | 必需 | 分区及加密配置；来源为正常系统的 `/metadata`、`/data` fstab 条目 |
+| `Android.bp` | 必需 | 定义模块以及安装位置；由维护者编写 |
+| 产品 `.mk` / BoardConfig 接入 | 必需 | 显式选择模块和策略；由维护者编写，示例将其拆成三个 `.mk` 文件 |
+| `manifest.xml` | 相应声明必须存在 | 若已有 Recovery 片段已声明全部所需 HAL，可复用；否则新增片段 |
+| init RC | 相应启动配置必须存在 | 若已有 Recovery RC 已正确启动全部服务，可复用；否则新增 |
+| 厂商 Recovery 模块 | 依设备而定 | 已有模块提供正确 Recovery 变体时复用，否则为专有程序和库声明新模块 |
+| `sepolicy/` | 所需权限必须具备 | 补充现有策略未提供的权限；不能凭空复制其他设备的域和设备节点 |
+| `auth_service.cpp` 或公共层认证桥 | 可选 | 只有实际服务需要桥接时才添加，不是每台设备都必须有 |
+| ueventd、固件、persist 挂载配置 | 依设备而定 | 来自本设备安全服务实际需要的节点、固件路径和启动顺序 |
 
-- `sharedsecret_services` 列出 AIDL 服务。
-- 可选 `sharedsecret_hidl_instances=4.1/default,4.1/strongbox` 按安全级别选择
-  实际提供的最高 HIDL Keymaster 版本。同一实例不能同时配置 4.0 和 4.1。
-- 所有参与者收到相同的排序参数列表，且必须返回相同校验和。未配置 HIDL
-  参与者时保留 AIDL 路径。
-- 只有确认本设备所有 protector 都不需要某服务，才能将 transport 设置为
-  `none` 并将 instance 留空。使用 Weaver 验证后，SP SID 仍可能需要 Gatekeeper。
+下面依次编写这些文件。平台 helper 修改的依赖和 SELinux 补丁属于其他平台项目，
+不是放在这个设备目录里的文件，见步骤 10。
 
-配置不能执行命令、任意选择后端库、关闭认证或根据用户输入选择密钥 blob，
-也不发出任意 init 命令。HIDL 需要 Recovery 中已审查的本地 passthrough 实现。
+## 2. 编写 `recovery.crypto.conf`
 
-厂商 HAL、完整库依赖、固件、Binder 驱动、匹配的系统版本/安全补丁属性、VINTF
-及 SELinux 权限由设备维护者提供。**SELinux 保持 enforcing，没有适用于所有
-设备的厂商安全服务包。** 若 passthrough HAL 需要 vendor 私有属性，应放入正确
-的 vendor HAL 域，并由设备提供已审查的 AIDL 桥，不能给 coredomain Recovery
-添加违反 vendor 属性隔离的访问权限。
+完整配置示例：
 
-Recovery servicemanager 使用 `VintfObjectRecovery`，合并
-`/system/etc/vintf/manifest/` 下的片段。添加唯一命名的 Recovery 片段，不覆盖
-已有 health/fastboot 声明或正常 Android 的 vendor manifest。
+```ini
+profile_version=1
+platform_sdk=37
+storage_binding=none
+fstab=/system/etc/recovery.crypto.fstab
+keymint_service=android.hardware.security.keymint.IKeyMintDevice/default
+security_level=tee
+gatekeeper_transport=aidl
+gatekeeper_instance=default
+weaver_transport=none
+weaver_instance=
+secureclock_service=android.hardware.security.secureclock.ISecureClock/default
+sharedsecret_services=android.hardware.security.sharedsecret.ISharedSecret/default
+```
 
-## 准备平台 Recovery 依赖
+| 字段 | 如何填写 |
+| --- | --- |
+| `profile_version`、`platform_sdk` | 当前解析器只接受 `1`、`37`；不能修改数字来宣称支持其他 Android 版本 |
+| `storage_binding` | 当前只接受 `none`，填写前必须确认实际平台未使用 storage-binding seed |
+| `fstab` | Recovery 内的独立 crypto fstab 路径，必须在 `/system/etc/` 下 |
+| `keymint_service` | `android.hardware.security.keymint.IKeyMintDevice/` 加真实实例名 |
+| `security_level` | 该密钥使用的真实安全级别，只接受 `tee` 或 `strongbox` |
+| `gatekeeper_transport`、`weaver_transport` | `aidl`、`hidl` 或 `none`，由实际认证实现决定 |
+| `gatekeeper_instance`、`weaver_instance` | 使用相应服务时填写实际实例名，例如 `default`；`none` 时必须留空 |
+| `secureclock_service` | 实际 SecureClock 完整服务名；仅在确认不需要时留空 |
+| `sharedsecret_services` | 逗号分隔的 AIDL SharedSecret 完整服务名，至少一个，不重复、不加空格 |
+| `sharedsecret_hidl_instances` | 可选；例如 `4.1/default`，仅支持 `4.0/4.1` 的 `default/strongbox` 实例 |
 
-本平台部分 AIDL 接口、analyzer 运行库和 SQLite 没有 Recovery 变体。
-`prepare_android17.py` 只补充所需构建声明，不修改正常系统代码；修改前核对
-已审查的源码哈希，在源码树外备份原文件，遇到未知声明或冲突即停止。
+配置使用 `字段=值`，不要在等号两边或值中加空格，不支持行尾注释或重复字段。
+空值保留等号。注释单独一行并从 `#` 开始。配置文件必须是 root 拥有的普通文件，
+不允许 group/world 写入；由下面的模块安装到 ramdisk，不放在 userdata 中。
 
-在 Android 源码根目录执行，替换 `/path/to/android` 为自己的路径。
-每条命令单独执行，失败后停止：
+需要 HIDL 时，要确认 Recovery 的本地 passthrough 实现实际存在；只有正常
+Android 的 HIDL 服务进程或 VINTF 声明还不够。没有可用 passthrough 的设备需要
+自己的桥接，见步骤 6。
+
+SharedSecret 要保留正常系统的全部参与者。若设备通过桥接提供 legacy 实例，
+例如 diting，可填写：
+
+```ini
+sharedsecret_services=android.hardware.security.sharedsecret.ISharedSecret/default,android.hardware.security.sharedsecret.ISharedSecret/legacy
+```
+
+如果使用可直接调用的 HIDL Keymaster passthrough，保留实际 AIDL 参与者，并增加：
+
+```ini
+sharedsecret_hidl_instances=4.1/default
+```
+
+同一硬件参与者不要通过 AIDL 桥和 HIDL 再各列一次；同一 HIDL 实例不要同时列
+4.0 和 4.1。AIDL 与 HIDL 参与者总计最多四个。使用 Weaver 不意味着 Gatekeeper
+一定可以关闭，SP SID 的验证仍可能需要它。
+
+## 3. 编写 `recovery.crypto.fstab`
+
+从**当前正常系统** fstab 复制 `/metadata` 和 `/data` 的真实条目，保留块设备路径、
+文件系统、挂载选项、`fileencryption`、`keydirectory`、`metadata_encryption`。
+常见来源是设备树中的 `rootdir/etc/fstab.*` 或正常系统 `/vendor/etc/fstab.*`。
+不要以老 TWRP/Recovery 的 `ice,wrappedkey` 配置为依据。
+
+下面是 diting 的示例，其他设备必须替换为自己的条目：
+
+```text
+/dev/block/bootdevice/by-name/metadata /metadata ext4 noatime,nosuid,nodev wait
+/dev/block/bootdevice/by-name/userdata /data f2fs noatime,nosuid,nodev,reserve_root=32768,resgid=1065,fsync_mode=nobarrier,inlinecrypt wait,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0,keydirectory=/metadata/vold/metadata_encryption,metadata_encryption=aes-256-xts:wrappedkey_v0
+```
+
+每个分区条目必须保持一整行；不要将上述长行拆成多行。fstab 五列依次为：
+
+```text
+块设备路径  挂载点  文件系统  Linux挂载选项  Android fs_mgr选项
+```
+
+这是解密后端的独立配置，不替换普通 Recovery fstab，也不在 init RC 中对它
+调用 `mount_all`、fsck 或格式化。实际只读映射和挂载由后端负责。
+
+## 4. 编写设备 `Android.bp`
+
+先定义四个配置模块。下面可以作为设备文件的起点；若复用已有 init/VINTF，
+删除对应重复模块，同时在产品清单里删除同名条目：
+
+```bp
+// SPDX-License-Identifier: Apache-2.0
+soong_namespace {
+    imports: ["vendor/acme/mydevice"],
+}
+
+prebuilt_etc {
+    name: "mydevice_rec_crypto_config",
+    recovery: true,
+    src: "recovery.crypto.conf",
+    filename: "recovery.crypto.conf",
+}
+prebuilt_etc {
+    name: "mydevice_rec_crypto_fstab",
+    recovery: true,
+    src: "recovery.crypto.fstab",
+    filename: "recovery.crypto.fstab",
+}
+prebuilt_etc {
+    name: "mydevice_rec_crypto_manifest",
+    recovery: true,
+    src: "manifest.xml",
+    relative_install_path: "vintf/manifest",
+    filename: "mydevice-recovery-crypto.xml",
+}
+prebuilt_etc {
+    name: "mydevice_rec_crypto_init",
+    recovery: true,
+    src: "init.recovery.mydevice-crypto.rc",
+    relative_install_path: "init",
+    filename: "init.recovery.mydevice-crypto.rc",
+}
+```
+
+| 属性 | 填写规则 |
+| --- | --- |
+| `name` | 唯一构建模块名，后面的 `PRODUCT_PACKAGES` 引用这个名字 |
+| `src` | 相对当前 `Android.bp` 的源文件路径，文件必须存在 |
+| `filename` | Recovery 内实际文件名，不一定与模块名相同 |
+| `relative_install_path` | `prebuilt_etc` 安装目录下的子目录 |
+| `recovery: true` | 安装到 Recovery，不是正常系统分区 |
+| `imports` | 未限定模块名的查找范围，指向实际声明 `soong_namespace` 的目录 |
+
+四个文件分别安装到 Recovery 的 `/system/etc/`、`/system/etc/vintf/manifest/`
+和 `/system/etc/init/`。`Android.bp` 只定义模块；没有被选中就不会因此打包，
+服务也不会因此启动。设备模块的选择见步骤 9。
+
+## 5. 声明厂商安全服务和完整库依赖
+
+先找出正常系统对应的可执行程序、库和依赖。如果现有模块已经提供可用的
+Recovery 变体，优先复用，不重复创建。否则在 vendor 项目中为原二进制声明
+Recovery 专用模块；不要把不兼容的新版本库替换进原来的系统 HAL。
+
+例如 `vendor/acme/mydevice/proprietary/Android.bp`。下例中二进制路径、库名和
+依赖都是**占位示例**，必须用本设备 ELF 的真实内容替换。不要覆盖 vendor
+自动生成的主文件；已有同路径文件时保存现有模块并追加/维护专用声明。
+
+```bp
+soong_config_module_type {
+    name: "mydevice_rec_prebuilt_binary_type",
+    module_type: "cc_prebuilt_binary",
+    config_namespace: "mydevice_recovery_crypto",
+    bool_variables: ["device_enabled"],
+    properties: ["enabled", "shared_libs"],
+}
+soong_config_module_type {
+    name: "mydevice_rec_prebuilt_library_type",
+    module_type: "cc_prebuilt_library_shared",
+    config_namespace: "mydevice_recovery_crypto",
+    bool_variables: ["device_enabled"],
+    properties: ["enabled", "shared_libs"],
+}
+
+mydevice_rec_prebuilt_binary_type {
+    name: "mydevice_rec_keymint",
+    stem: "mydevice-recovery-keymint",
+    srcs: ["vendor/bin/hw/android.hardware.security.keymint-service-example"],
+    recovery: true,
+    compile_multilib: "64",
+    enabled: false,
+    strip: { none: true },
+    visibility: ["//visibility:public"],
+    soong_config_variables: {
+        device_enabled: {
+            enabled: true,
+            shared_libs: ["libbase", "libbinder_ndk", "liblog", "mydevice_rec_libvendorcrypto"],
+        },
+    },
+}
+mydevice_rec_prebuilt_library_type {
+    name: "mydevice_rec_libvendorcrypto",
+    stem: "libvendorcrypto",
+    srcs: ["vendor/lib64/libvendorcrypto.so"],
+    recovery: true,
+    compile_multilib: "64",
+    enabled: false,
+    strip: { none: true },
+    visibility: ["//visibility:public"],
+    soong_config_variables: {
+        device_enabled: {
+            enabled: true,
+            shared_libs: ["liblog"],
+        },
+    },
+}
+```
+
+`srcs` 相对这个模块文件所在目录；模块放在 `proprietary/` 才能使用示例中的
+`vendor/...` 路径。`stem` 应保留库的实际文件名，不能把依赖所需的
+`libvendorcrypto.so` 安装成模块名对应的另一个文件。HAL passthrough 库还可能
+需要 `relative_install_path: "hw"`。上述 64 位配置也要按实际服务位数调整。
+
+按同样方式声明实际 Gatekeeper、需要的 Weaver、独立 SecureClock、TEE listener
+等程序，以及它们递归需要的厂商库。检查 ELF 的 `DT_NEEDED`，将每个依赖映射到
+真实 Soong 模块，并确认该模块有对应 Recovery/架构变体；还要核对运行时
+`dlopen` 的库、配置文件和固件，它们不会全部出现在 `DT_NEEDED` 中。
+
+`shared_libs` 写的是模块名，不是 `.so` 文件路径。平台 Binder/HIDL/AIDL 库和
+厂商预编译库的接口版本也要匹配。不要照搬 diting 的二十多个库，也不要用
+`check_elf_files: false` 掩盖未解决的依赖。
+
+确认 vendor 祖先目录存在有效 namespace；设备 `imports` 和产品
+`PRODUCT_SOONG_NAMESPACES` 都引用它。例如已有 namespace 在
+`vendor/acme/mydevice/Android.bp`，无需在 `proprietary/` 再声明一个不同 namespace。
+
+## 6. 是否需要 `auth_service.cpp` / 高通认证桥
+
+如果 Recovery 已能直接访问配置中的原生 AIDL Gatekeeper 和 SharedSecret，
+**不需要认证桥模块**。有实际可用的 HIDL passthrough 时，也可按步骤 2 配置 HIDL。
+
+当前 diting 使用设备桥接，将 QTI HIDL Gatekeeper 1.0 和旧 Keymaster 的共享秘密
+协商提供成 AIDL 服务。采用相同桥接方案前，必须核对 HAL ABI、factory 原型、
+固件与 vendor 属性依赖。公共层源码和规则由设备维护项目提供，不包含在本
+Recovery 仓库中。具体参考：
+
+- [高通公共源码和模块定义](https://github.com/Night-stars-1/uwuaosp-diting/tree/main/cloud/diting_recovery_crypto/common)
+- [diting 设备 Android.bp](https://github.com/Night-stars-1/uwuaosp-diting/blob/main/cloud/diting_recovery_crypto/Android.bp)
+
+如果已经在 Android 源码中部署了 `device/qcom/recovery-crypto-common`，可以在
+设备 namespace 的 `imports` 加入它，并追加以下认证桥声明；库模块要先按步骤 5
+定义，不能保留不存在的示例名称：
+
+```bp
+soong_config_module_type {
+    name: "mydevice_crypto_cc_defaults_type",
+    module_type: "cc_defaults",
+    config_namespace: "mydevice_recovery_crypto",
+    bool_variables: ["device_enabled"],
+    properties: ["enabled", "shared_libs"],
+}
+mydevice_crypto_cc_defaults_type {
+    name: "mydevice_crypto_bridge_defaults",
+    enabled: false,
+    soong_config_variables: {
+        device_enabled: {
+            enabled: true,
+            shared_libs: [
+                "mydevice_rec_libqtikeymaster4", "libhidlbase", "libutils", "liblog",
+                "libbinder_ndk", "libbase", "android.hardware.gatekeeper-V1-ndk",
+                "android.hardware.gatekeeper@1.0",
+                "android.hardware.security.sharedsecret-V1-ndk",
+                "android.hardware.security.keymint-V5-ndk",
+                "android.hardware.keymaster@4.0", "android.hardware.keymaster@4.1",
+            ],
+        },
+    },
+}
+cc_binary {
+    name: "mydevice_rec_auth_service",
+    defaults: ["mydevice_crypto_bridge_defaults", "qcom_recovery_crypto_auth_sources"],
+    stem: "mydevice-recovery-auth",
+    recovery: true,
+    compile_multilib: "64",
+}
+```
+
+第一段定义可被本设备 `mydevice_recovery_crypto.device_enabled` 控制的 defaults
+类型，第二段设置
+默认关闭/开启后的依赖，第三段才生成程序。公共 defaults 通过公共目录的
+`filegroup` 提供 C++ 源码，避免 Soong 到设备目录错误查找 `auth_service.cpp`。
+
+增加此桥后，还要把模块加入产品清单、在 init 启动它、在 VINTF 声明它注册的
+接口，并更新 conf 的 Gatekeeper/SharedSecret 实例。不能只添加 `cc_binary`。
+高通公共层不能替代各设备专有库和运行条件的适配。
+
+## 7. 编写 `manifest.xml`
+
+下面对应开头的示例组合：KeyMint、SecureClock、SharedSecret 和原生 AIDL
+Gatekeeper。版本和实例必须按本设备实际服务修改；构建链接的 `*-V5-ndk` 库名
+不代表厂商进程一定实现 V5 HAL。
+
+```xml
+<manifest version="1.0" type="device">
+    <hal format="aidl">
+        <name>android.hardware.security.keymint</name>
+        <version>1</version>
+        <fqname>IKeyMintDevice/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.secureclock</name>
+        <version>1</version>
+        <fqname>ISecureClock/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.sharedsecret</name>
+        <version>1</version>
+        <fqname>ISharedSecret/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.gatekeeper</name>
+        <version>1</version>
+        <fqname>IGatekeeper/default</fqname>
+    </hal>
+</manifest>
+```
+
+有 AIDL Weaver 时新增它实际版本的 `android.hardware.weaver` / `IWeaver/<实例>`
+声明。桥接提供 `ISharedSecret/legacy` 时，在 SharedSecret 条目加入相应 fqname。
+厂商进程若还注册 RKP 等接口，也需保留相应声明。采用 HIDL 时不能把接口名字
+随意改成 AIDL 声明，仍需正确的实现与传输配置。
+
+该模块安装成 `/system/etc/vintf/manifest/mydevice-recovery-crypto.xml`，由
+`VintfObjectRecovery` 合并。用独立文件，不覆盖 health/fastboot 等已有片段。
+**manifest 只声明服务，不会启动服务或提供缺失的实现。**
+
+## 8. 编写 init RC、节点权限和设备策略
+
+### 8.1 `init.recovery.mydevice-crypto.rc`
+
+先参考正常系统对应服务的 RC，再针对 Recovery 调整路径、启动时机、用户、组
+和 SELinux 上下文。下例使用 `mydevice_rec_keymint` 和另行声明的
+`mydevice_rec_gatekeeper` 两个程序；`<KEYMINT_DOMAIN>`、`<GATEKEEPER_DOMAIN>`
+是必须替换的占位符，不是有效的策略域。
+
+```rc
+on post-fs
+    start mydevice-recovery-keymint
+    start mydevice-recovery-gatekeeper
+
+service mydevice-recovery-keymint /system/bin/mydevice-recovery-keymint
+    class hal
+    user system
+    group system
+    seclabel u:r:<KEYMINT_DOMAIN>:s0
+    disabled
+    oneshot
+
+service mydevice-recovery-gatekeeper /system/bin/mydevice-recovery-gatekeeper
+    class hal
+    user system
+    group system
+    seclabel u:r:<GATEKEEPER_DOMAIN>:s0
+    disabled
+    oneshot
+
+on property:init.svc.fastbootd=running
+    stop mydevice-recovery-gatekeeper
+    stop mydevice-recovery-keymint
+```
+
+实际厂商服务可能需要额外组、socket、TEE listener 和固件/persist 的只读挂载。
+应在相关挂载和 listener 准备好后再启动安全服务；独立 SecureClock/Weaver
+进程也需定义、启动和打包。使用认证桥时，将 Gatekeeper 的启动项替换为真实
+认证桥，并保留它需要的厂商实现。不要同时启动两个注册同一实例的服务。
+
+程序路径由模块的 `stem` 和安装位置决定。例如 `stem: "mydevice-recovery-keymint"`
+安装为 `/system/bin/mydevice-recovery-keymint`，RC 不能写模块名或原 vendor 路径。
+每个 `start` 指向 RC 的 service 名，不是 Soong 模块名。
+
+RC 安装到 `/system/etc/init/` 以便 init 自动发现，不与已有
+`/init.recovery.qcom.rc` 争抢相同复制目标。不要在 RC 中对 crypto fstab 调用
+`mount_all`，userdata 解密挂载由后端执行。确认实际设备的 init 会加载这个目录，
+并从日志验证服务启动，不能只检查 RC 文件存在。
+
+### 8.2 `sepolicy/recovery.te`
+
+这不是一份所有厂商都能直接使用的完整策略。下面给出读取已有密钥与存储的
+公共起点；还需要按真实 HAL 域补充 Binder、服务注册、设备节点、固件和入口权限。
+平台密钥读取 neverallow 例外由步骤 10 的明确补丁与 BoardConfig 开关处理。
+
+```te
+recovery_only(`
+  r_dir_file(recovery, metadata_file)
+  r_dir_file(recovery, system_data_file)
+  r_dir_file(recovery, system_data_root_file)
+  r_dir_file(recovery, system_userdir_file)
+  r_dir_file(recovery, unencrypted_data_file)
+  r_dir_file(recovery, media_rw_data_file)
+  allow recovery { vold_metadata_file vold_data_file keystore_data_file }:dir { open read getattr search };
+  allow recovery { vold_metadata_file vold_data_file keystore_data_file }:file { open read getattr map };
+  allow recovery { system_data_file system_data_root_file system_userdir_file media_rw_data_file }:dir ioctl;
+  allowxperm recovery { system_data_file system_data_root_file system_userdir_file media_rw_data_file }:dir ioctl { 0x6616 0x6617 0x661a };
+')
+```
+
+根据服务选择正确 HAL 客户端属性和 `service_manager find`、`binder_call` 权限；
+服务端域还需要其 HAL 服务端角色与注册权限。不要因某个 AVC 就授予所有 domain
+访问所有文件。使用 Gatekeeper passthrough 时，还需考虑 vendor 属性隔离，不能
+简单给 coredomain Recovery 加上全部 vendor 权限。
+
+ramdisk 程序可能保持 `rootfs` 标签，init 使用显式 `seclabel` 时仍需要审查正确
+的入口执行和域切换权限。不能仅添加一条 `file_contexts` 就假定已完成入口适配。
+当前 diting 的实际做法见
+[公共 recovery.te](https://github.com/Night-stars-1/uwuaosp-diting/blob/main/cloud/diting_recovery_crypto/common/sepolicy/recovery.te)。
+其域和设备节点属于该 QTI 方案，其他平台需替换，不能原样套用。
+
+`recovery_only` 是 m4 宏：块内注释也不能含破坏配对的单引号。所有新权限限制
+在 Recovery 中；保持 enforcing，不移除 neverallow，也不为失败添加清除数据回退。
+
+### 8.3 `file_contexts` 和 `service_contexts`
+
+已有正确标签就复用，不重复声明冲突规则。新增可执行路径时，可以按已审查的
+设备入口策略添加：
+
+```text
+/system/bin/mydevice-recovery-keymint u:object_r:<KEYMINT_EXEC_TYPE>:s0
+```
+
+这里的 `<KEYMINT_EXEC_TYPE>` 必须换成实际已定义的文件类型，且最终 ramdisk
+标签、init 上下文和 `.te` 入口权限需一致。不要套用不兼容的 vendor 镜像入口标签。
+`file_contexts` 不使用 `.te` 的 `recovery_only` 宏。
+
+新增服务实例时，在 `service_contexts` 为真实服务名配置标签。例如桥接增加
+legacy SharedSecret，而现有策略尚未覆盖它时：
+
+```text
+android.hardware.security.sharedsecret.ISharedSecret/legacy u:object_r:hal_sharedsecret_service:s0
+```
+
+这仍不授予服务端注册和客户端访问权限，对应 `.te` 规则要同时具备。
+
+### 8.4 `ueventd.crypto.rc` 与固件
+
+检查正常系统安全服务实际访问哪些节点，以及 Recovery 下的属主、组、权限。
+只有需要补充时才创建节点规则；不要将所有 `/dev` 设为可读写。
+
+例如 QTI 设备可能需要 `/dev/qseecom`、DMA heap、ION 等，但具体节点、权限和
+用户组由本设备决定。将文件安装到独立 Recovery 路径，并在**实际已加载的
+Recovery ueventd 配置**中导入它，或者合并进设备自己管理的规则；不要覆盖另一
+模块拥有的同名复制目标。init RC 和 ueventd RC 是两套不同配置，不能互相代替。
+
+固件目录必须在真实 Recovery ramdisk 中存在，挂载当前槽匹配的固件。需要
+persist 时核对只读挂载与服务行为。libdl 加载、firmware/config 文件和节点
+权限都要验证，即使全部 `shared_libs` 已经链接通过。
+
+## 9. 接入产品和 BoardConfig
+
+### 9.1 创建 `recovery-crypto/config.mk`
+
+```make
+# SPDX-License-Identifier: Apache-2.0
+MYDEVICE_RECOVERY_CRYPTO ?= false
+```
+
+该设备开关默认关闭。完成文件和服务审查后，可在此将默认值改为 `true`；临时
+构建也可导出 `MYDEVICE_RECOVERY_CRYPTO=true`。产品与 BoardConfig 都引用同一
+文件，避免一边打包而另一边没有策略。这里的变量名由设备自定。
+
+### 9.2 创建 `recovery-crypto/crypto.mk`
+
+下例对应本指南的原生 AIDL Gatekeeper 方案：先完成步骤 5 中 KeyMint、Gatekeeper
+和全部依赖的真实模块声明。`mydevice_rec_libvendorcrypto` 是前面占位库模块，
+要改成实际依赖；如果用认证桥，替换相应模块清单。
+
+```make
+# SPDX-License-Identifier: Apache-2.0
+include device/acme/mydevice/recovery-crypto/config.mk
+
+ifeq ($(MYDEVICE_RECOVERY_CRYPTO),true)
+SOONG_CONFIG_NAMESPACES += recovery_crypto mydevice_recovery_crypto
+SOONG_CONFIG_recovery_crypto += android17
+SOONG_CONFIG_recovery_crypto_android17 := true
+SOONG_CONFIG_mydevice_recovery_crypto += device_enabled
+SOONG_CONFIG_mydevice_recovery_crypto_device_enabled := true
+
+PRODUCT_SOONG_NAMESPACES += \
+    device/acme/mydevice/recovery-crypto \
+    vendor/acme/mydevice
+
+PRODUCT_PACKAGES += \
+    librecovery_crypto_android17 \
+    mydevice_rec_crypto_config \
+    mydevice_rec_crypto_fstab \
+    mydevice_rec_crypto_manifest \
+    mydevice_rec_crypto_init \
+    mydevice_rec_keymint \
+    mydevice_rec_gatekeeper \
+    mydevice_rec_libvendorcrypto
+endif
+```
+
+示例为厂商模块和认证桥使用**设备自己的 Soong 开关**，与共享后端开关分开。
+这样其他机型启用 Android 17 后端时，不会连带启用本设备的专有模块。已有 diting
+示例使用共享的 android17 条件；新设备不要把所有专有模块都绑定到那个全局开关。
+
+这些名称不是系统自动产生的：四个配置模块来自步骤 4 的 `Android.bp`，服务
+和厂商库来自步骤 5 的 vendor 声明，后端来自本目录已有 `Android.bp`。
+
+`PRODUCT_PACKAGES` 使用模块 `name`，init 使用 service 名与安装后的程序路径，
+conf/VINTF 使用 HAL 接口实例；这是四类名称，不能混用。这里没有选择
+`recovery_crypto_android17_test`，它是维护者单独运行的普通 Android 测试模块。
+
+需要高通公共层时，在 `PRODUCT_SOONG_NAMESPACES` 追加实际公共 namespace，
+并选择真实认证桥模块和全部运行依赖。新增 `PRODUCT_COPY_FILES` 也放在同一
+设备开关条件内，且必须检查其 Recovery 目标没有和已有文件冲突。
+
+在已有设备产品文件（例如 `device/acme/mydevice/device.mk`）加入：
+
+```make
+$(call inherit-product, device/acme/mydevice/recovery-crypto/crypto.mk)
+```
+
+### 9.3 创建 `recovery-crypto/BoardConfig.mk`
+
+```make
+# SPDX-License-Identifier: Apache-2.0
+include device/acme/mydevice/recovery-crypto/config.mk
+
+ifeq ($(MYDEVICE_RECOVERY_CRYPTO),true)
+BOARD_VENDOR_SEPOLICY_DIRS += device/acme/mydevice/recovery-crypto/sepolicy
+BOARD_SEPOLICY_M4DEFS += recovery_crypto_android17=true
+endif
+```
+
+在已有设备 `BoardConfig.mk` 加入：
+
+```make
+include device/acme/mydevice/recovery-crypto/BoardConfig.mk
+```
+
+需要公共层策略时，在相同条件内加入该实际策略目录。不要将设备开关或这些
+include 加进所有设备共用的 Recovery 产品配置。
+
+四处配置的职责是：
+
+| 位置 | 职责 |
+| --- | --- |
+| 设备开关 `MYDEVICE_RECOVERY_CRYPTO` | 决定本设备是否接入 |
+| `SOONG_CONFIG_recovery_crypto_android17` | 开启共享 Android 17 后端 |
+| `SOONG_CONFIG_mydevice_recovery_crypto_device_enabled` | 仅开启本设备的厂商模块与认证桥 |
+| `BOARD_SEPOLICY_M4DEFS` | 开启平台补丁中的 Recovery 专用密钥读取例外 |
+
+前面的四个普通 `prebuilt_etc` 没有继承认证桥的 `enabled` 开关，它们由这里的
+产品条件决定是否安装。保持设备专用模块及其副作用均在该设备的启用条件内。
+
+## 10. 准备平台依赖和密钥读取补丁
+
+先进入 Android 源码根目录；下面的 `/path/to/android` 必须替换为实际路径。
+每条命令单独运行，失败后停止，不继续编译。
 
 预览：
 
@@ -166,187 +644,155 @@ python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android --a
 python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android --check
 ```
 
-这些命令不编译、不启用设备配置、不访问手机，也不读取真实用户密钥。
-已审查的平台版本与格式相关源码哈希记录在 [source-review.json](source-review.json)。
-平台更新改变这些源码时，需要重新审查。
+helper 核对 `source-review.json` 中关键源码的 SHA-256，补充已审查的 AIDL、
+analyzer 和 SQLite Recovery 依赖声明，并检查/应用明确的 `system/sepolicy`
+补丁。它不生成设备 HAL 配置、不部署厂商库、不启用设备，也不编译或刷机。
 
-helper 还给 `system/tools/aidl/Android.bp` 中的 `aidl-analyzer-main` 静态库增加
-`recovery_available: true`。AIDL 会向生成的 C++ analyzer 传播接口的 Recovery
-可用性，因此其静态依赖也必须提供同一镜像变体。这不代表会将 analyzer 安装到
-Recovery，也不改变正常系统代码；声明变化时会拒绝写入并要求审查。
+`source-review.json` 不是密钥或运行时配置。平台代码变更导致检查失败时，先
+比较实际变化对 SP、vold、keystore2 等格式的影响，再审查更新；不能仅替换哈希。
+策略补丁冲突也需解决真实来源变化，不用正则替换规则或禁用检查绕过。
 
-依赖声明属于 `hardware/interfaces`、`system/tools/aidl` 和 `external/sqlite`。
-维护发行版时应提交到相应 fork 并由 manifest 跟踪，或者同步这些项目后重新应用。
-设备适配属于 device/vendor 项目。`repo sync -c bootable/recovery` 只更新通用
-后端和 helper，不执行 helper，也不覆盖其他项目的适配。
+这些改动分别属于 `hardware/interfaces`、`system/tools/aidl`、`external/sqlite`
+和 `system/sepolicy`。维护发行版时提交到相应 fork，并由 manifest 跟踪；
+或在同步这些项目后重新审查和应用。具体补丁范围见 [技术参考](REFERENCE.zh-CN.md)。
 
-## 平台 SELinux 密钥访问补丁
+## 11. 编译前和镜像打包后检查什么
 
-helper 对 `system/sepolicy` 检查并应用 `tools/crypto/patches/` 中完整的已审查补丁：
+先确认设备开关已经启用、所有模块名可解析、厂商依赖有正确 Recovery 变体。
+再由维护者使用当前 ROM 的构建入口选择实际产品/版本/变体，编译 Recovery。
+本指南不自动启动编译，也不提供一条适合所有设备布局的刷入命令。
 
-- AOSP：`android17-recovery-key-access.patch`。
-- uwuAOSP：`android17-uwu-recovery-key-access.patch`，审查基线为
-  `b41cbf3b46882139654574fe46ca5cf8175bf8a5`，保留已有 apexd metadata 例外和
-  无关规则。
+**Soong-only 的 `recoveryimage` 目标在当前 uwuAOSP 中可能只生成压缩 ramdisk。**
+不能仅因文件名叫 `recovery.img` 就当成完整可刷镜像；需按本设备 header、内核/
+ramdisk 所在分区、AVB、rollback 和当前槽布局完成打包。diting 的打包器仅适用
+于其已审查的无内核 v4 布局，不能直接用于其他设备。
 
-脚本在隔离副本上使用 Git 检查原始或完整已应用状态，保留兼容的无关修改，
-拒绝冲突和部分应用状态。**不使用正则生成或重写策略规则。** 输入与补丁哈希
-记录在补丁旁的 JSON 清单中；必须有且仅有一个完整变体匹配，不混用不同补丁
-的 hunk。未知的密钥隔离规则改动仍需审查。
+在实际待刷的 ramdisk/镜像中核对以下内容，不能只看可能残留的旧 product 输出：
 
-补丁本身不授予权限。设备必须在 **BoardConfig** 中，与解密策略采用相同条件
-显式启用：
+| 内容 | 本指南示例的实际位置 |
+| --- | --- |
+| 后端 | `/system/lib64/librecovery_crypto_backend.so`，32 位使用对应 lib 目录 |
+| worker | `/system/bin/recovery_crypto_worker` |
+| 后端配置 | `/system/etc/recovery.crypto.conf` |
+| crypto fstab | `/system/etc/recovery.crypto.fstab` |
+| VINTF | `/system/etc/vintf/manifest/mydevice-recovery-crypto.xml` |
+| init RC | `/system/etc/init/init.recovery.mydevice-crypto.rc` |
+| KeyMint / Gatekeeper | RC 中配置的真实可执行路径 |
+| 全部库、固件目录、配置、节点规则 | 根据依赖闭包及运行时加载路径逐项确认 |
+| 策略及属性 | 真实文件/进程标签、匹配的系统和 vendor 安全补丁等属性 |
 
-```make
-BOARD_SEPOLICY_M4DEFS += recovery_crypto_android17=true
+worker 位数须与 Recovery 一致；后端与配置必须是 root 拥有的普通文件，不允许
+组或其他用户写入。当前私有 IPC 为 v2，Recovery 与 worker 要一起重编译。
+不要伪造安全补丁等级让旧密钥通过，也不在 Recovery 中自动升级 blob。
+
+## 12. 诊断与真机验证
+
+### 解锁失败怎么定位
+
+进入新 Recovery 后，先核对自己定义的 init service 状态。例如下面命令在电脑
+执行，每条分别运行：
+
+```bash
+adb -d shell getprop init.svc.mydevice-recovery-keymint
 ```
 
-只有该开关和 `target_recovery` 同时为真时，例外才生效。普通 Android 与未接入
-设备保持原来的密钥隔离规则。接入的 Recovery 可读取已有普通文件中的密钥和
-数据库、添加/查询内核 fscrypt 密钥；写入、执行、访问非普通密钥文件、设置
-加密策略和移除密钥仍被禁止。
+```bash
+adb -d shell getprop init.svc.mydevice-recovery-gatekeeper
+```
 
-这一权限依赖可信 Recovery 代码，不将 UI 与 worker 隔离到不同 SELinux 域。
-维护发行版时应把明确补丁纳入平台 SELinux fork，或同步 `system/sepolicy` 后
-重新应用。设备权限与开关仍留在设备树，同步 Recovery 不会修改它们。
+如果使用认证桥或 TEE listener，改为它们实际的 init service 名。空值一般表示
+没有对应服务状态，`stopped` 表示当前未运行；需要结合 init 日志确认未加载、
+启动失败或进程退出的具体原因。`running` 也不能单独证明 HAL 的密钥操作正常。
 
-## 当前支持范围与限制
-
-- 要求真实的 AIDL KeyMint 实现。仅有 HIDL Keymaster 的设备需要另行实现兼容
-  适配；本后端不启动 keystore2 兼容守护进程，也不猜测转换接口。
-- 支持 HIDL Gatekeeper 1.0、Weaver 1.0，以及 Keymaster 4.0/4.1 的 SharedSecret
-  协商。HIDL 仍需 Recovery passthrough 库；只有服务程序或 factory 的设备可能
-  需要设备树中的桥接，manifest 不能代替实现。
-- 使用已审查的 keystore2 live client-key schema，包括 `blobentry.state`、SELinux
-  domain 2、locksettings namespace 103 和已知 UUID 编码。拒绝旧 APP namespace
-  密钥、super-encrypted/boot-level-bound blob 与未知元数据，不迁移或升级密钥。
-- 支持 raw、KeyMint `wrappedkey_v0` 和上游 block-crypto `wrappedkey` 的运行时
-  转换。上游 wrapped key 需要真实内核 ioctl。旧 dm-default-key option format 1、
-  `ice` 别名、多设备 userdata 和 logical userdata 需要额外适配。
-- 当前拒绝 storage-binding seed 配置。`storage_binding=none` 必须基于正常平台
-  确实未使用 seed 的核对，不能插入猜测或公开 seed，也不能绕过检查。
-- 仅支持内部用户，UI 当前只展示用户 0。不支持工作资料挑战、可采纳存储、
-  escrow-token 解锁、3×3～6×6 之外的图案网格或非 ASCII 屏幕密码键盘。
-- 默认只读挂载拒绝需要恢复的文件系统，不通过写入修复损坏或未干净卸载的分区。
-- 框架凭据和 IPC 缓冲区锁定内存且排除转储；派生字节和自身持有的 Binder 副本
-  会清除，但不能保证编译器、HAL、Binder 或 OpenSSL 的内部副本全部锁定。
-  worker 禁用 core dump；这不是对物理内存获取或厂商错误日志的安全认证。
-
-## 解锁失败怎么定位
-
-后端把固定诊断检查点追加到已有 `/tmp/recovery.log`，不依赖 logd/logcat。
-worker 标准输出和错误仍重定向到 `/dev/null`。记录只含固定阶段名、公开结果码、
-数字 errno/Binder/HAL 错误码，不含凭据、图案、用户 ID、文件路径、密钥、令牌
-或厂商错误字符串。
-
-诊断器拒绝符号链接、非普通文件、非 root 所有文件，以及达到 4 MiB 的日志，
-不会自行创建日志。记录失败不改变解锁结果和 errno。
-
-在含诊断代码的 Recovery 中尝试一次解锁，**重启 Recovery 前**提取：
+在手机尝试一次解锁，**重启 Recovery 前**读取：
 
 ```bash
 adb -d pull /tmp/recovery.log recovery-decrypt.log
 ```
 
-首先检查 `services`、`metadata`、`de_keys`、`credential_type`；随后检查 CE 子阶段、
-`sp_unlock`，以及成功解锁 SP 后的 `ce_load`。汇总错误可能重复之前的错误，应
-优先查看前面的具体子阶段。CE 密钥轮换可能尝试多个候选，不会重复认证；如果
-最终 `ce_load` 成功，前一个候选失败不代表整体失败。
-
-| 检查点 | 应核查的内容 |
+| 失败阶段 | 先检查什么 |
 | --- | --- |
-| `protector_key` | 从 keystore 读取当前 SP protector 密钥及安全级别 |
-| `credential_format`、`stretch` | 输入编码和存储的 scrypt 参数 |
-| `gatekeeper_input`、`gatekeeper_verify`、`gatekeeper_token`、`weaver_read` | 输入边界、硬件验证、限流和令牌格式 |
-| `keymint_begin`、`keymint_finish`、`secureclock` | KeyMint 密钥操作、认证解密和时间戳 |
-| `sp_discardable`、`sp_software_decrypt`、`sp_format`、`sp_handle`、`sp_derive` | SP 状态、解封、主用户验证和 FBE 子密钥派生 |
-| `ce_key_directories`、`stored_key_read`、`stored_key_decrypt` | 已有 CE 候选密钥及软件封装 |
-| `storage_export` | 硬件封装存储密钥的转换 |
-| `fscrypt_policy`、`fscrypt_descriptor`、`fscrypt_identifier` | 目录加密策略与密钥的匹配 |
-| `fscrypt_add_key`、`fscrypt_status` | 内核密钥安装与存在状态 |
+| `services` | conf 实例、服务启动、VINTF、SharedSecret 全部参与者、Binder/SELinux、固件 |
+| `metadata` | crypto fstab、分区路径、内核 dm-default-key/硬件密钥能力、KeyMint 操作 |
+| `de_keys` | 已有 DE 密钥读取权限、内核 fscrypt 和目录策略匹配 |
+| `credential_type` | locksettings/SP 格式与当前源码审查基线 |
+| `gatekeeper_verify` / `weaver_read` | 认证 HAL、输入格式、硬件错误或限流 |
+| `sp_unlock` | 前面 SP 子阶段、protector 密钥、KeyMint 和令牌处理 |
+| `ce_load` | CE 候选密钥、wrapped key 转换、内核安装及 media 目录策略 |
 
-| `result` | 含义 |
-| --- | --- |
-| 0 | 成功 |
-| 1 | 不支持 |
-| 2 | 服务不可用 |
-| 3 | 已有密钥或状态缺失 |
-| 4 | 密钥需要升级 |
-| 5 | 凭据被拒绝 |
-| 6 | 硬件限流 |
-| 7 | 其他 I/O、格式或密码学错误 |
+`result=0` 为成功，1 不支持，2 服务不可用，3 已有密钥/状态缺失，4 需升级密钥，
+5 凭据拒绝，6 硬件限流，7 其他 I/O/格式/密码学错误。`source=none code=0` 不是
+成功标记。完整子阶段含义见 [诊断技术参考](REFERENCE.zh-CN.md#解锁失败怎么定位)。
 
-`source=hal`、`binder`、`errno` 表示数字错误码来源。`source=none code=0` 仅表示
-没有原始错误码，**不表示成功**。例如 `keymint_begin result=7 source=hal code=...`
-定位到 KeyMint 拒绝，不能直接推断图案错误。诊断不会自动重试、注册、升级或
-重写密钥。
+按实际设备能收集到的 init、内核、SELinux AVC 和厂商服务日志继续定位；诊断
+不依赖 logcat。不要在日志加入 PIN、图案、密钥或认证令牌，也不自动反复尝试
+凭据。失败后仍要验证取消、ADB sideload、重启和普通菜单能使用。
 
-Gatekeeper 已有 handle 可能是旧 version 0。已审查的
-[GateKeeper::Verify](https://android.googlesource.com/platform/system/gatekeeper/+/5b5e75b5bda9fccbc3132e9624cb25286babdaac/gatekeeper.cpp)
-拒绝超过支持上限的版本，不拒绝 version 0。后端保持大小和版本上限检查，将
-旧 handle 交给配置的 HAL，不重新注册，并继续验证硬件认证令牌和 SID。
-输入格式有效不能证明认证成功。
+真机验收至少包括实际支持的空锁屏、PIN、密码、图案路径，错误凭据与限流，
+成功后的文件名/内容读取，以及返回 Android 后原凭据仍可用。当前 UI 只展示
+用户 0，图案支持 3×3～6×6，屏幕密码输入限基本 ASCII；这些限制不能靠设备
+conf 扩大。
 
-## 编译与真机验证
+## 13. 未适配、临时关闭和后续 repo sync
 
-部署测试可在不编译 Android 的情况下运行。每条命令分别执行：
+没有在产品和 BoardConfig 接入的设备不会因同步 Recovery 自动启用后端。
+本示例 `config.mk` 默认 false，临时关闭也可在构建环境使用：
 
 ```bash
-python3 bootable/recovery/tools/crypto/test_prepare_android17.py
+export MYDEVICE_RECOVERY_CRYPTO=false
 ```
+
+共享默认值改为 true 的设备同样需保留这个可关闭条件。关闭时不能只从包清单
+删除后端，却保留新增安全服务、固件挂载和无条件权限。
+
+将设备目录、vendor 声明和平台 helper 的改动分别提交到所属项目。之后在
+Android 源码根目录执行：
 
 ```bash
-python3 bootable/recovery/tools/crypto/test_policy_patch.py
+repo sync -c bootable/recovery
 ```
 
-策略测试仅在临时公开样本上应用补丁，并用 m4 验证四种 opt-in/Recovery 组合、
-普通系统隔离与删除/写入限制，不编译 SELinux 二进制策略。
+只更新通用代码，不覆盖 device/vendor 适配，也不自动应用 helper。更新其他
+项目后重新检查其适配；不要向 `bootable/recovery` 复制设备专用补丁，也不使用
+整仓 reset/clean 丢弃已有适配。
 
-维护者应在普通 Android native-test 环境编译运行 `recovery_crypto_android17_test`。
-它使用合成数据测试 SP 分版本 KDF、scrypt、认证 AES-GCM、截断 PasswordData
-以及已提交且校验有效的 WAL，不调用 HAL 或读取真实凭据/密钥。该测试故意不
-作为 Recovery 镜像模块，因为平台 gtest 没有 Recovery 变体；生产后端仍为
-`recovery: true`。测试不能证明 Recovery 链接、HAL 可用或真机解密成功。
+## diting 已有适配怎么使用
 
-普通交互式进入 Recovery 时，已安装后端会先准备 metadata/DE，再显示解锁页。
-取消或失败进入主界面；之后选择内部存储 ZIP 时，可以复用已验证的解锁状态或
-再次尝试。命令驱动的 OTA/sideload、wipe、rescue、just-exit 和无界面启动不等待
-输入凭据。启动交互流程不等于解决后端的解锁错误。
+这部分只适用于 diting 准备仓库，不是上述新设备的通用安装器。Android 源码
+已同步，且准备仓库为当前版本时，从准备仓库目录预览：
 
-图案界面支持可触摸的 3×3～6×6 网格、选中圆点、连线及解锁/清除/取消按钮。
-从圆点开始新笔画会清除之前的图案；至少四点且手指抬起后才能显式提交。跨过
-同行、同列和 45 度对角线上的未访问单元时，遵循已审查的 uwuAOSP
-LockPatternView 规则。音量键导航网格和按钮，电源键选择。自定义/简化 UI
-可以拒绝可选图案接口，不影响 sideload。
+```bash
+python3 cloud/install_diting_recovery_crypto.py /home/android/uwu-diting
+```
 
-UI 直接访问调用者锁定的凭据内存，不把图案复制到菜单文本或日志。取消会清除
-凭据，离开时重绘两个 framebuffer 页面；普通菜单仍可滑动。合成布局和笔画
-测试位于 `tests/unit/screen_ui_test.cpp`，不做真实凭据验证。
+应用：
 
-后端在 metadata/DE 恢复后从只读 locksettings 快照读取 `lock_pattern_size`。
-缺少设置时默认 3；数据库失败、重复/损坏值或不支持的尺寸会停止，不提供手动
-覆盖，也不自动尝试其他尺寸。单元编码为 `row * gridSize + column + '1'` 单字节，
-包括索引大于 8 的单元。可选导出 `recovery_crypto_get_pattern_size_v1` 不改变
-必需 v1 ABI 结构；没有此导出的自定义后端保持 3×3。私有 worker 协议为 v2，
-Recovery 与 worker 必须一起重编译。相关格式与协议测试位于
-`crypto/android17/tests/native_test.cpp` 和 `crypto/tests/protocol_test.cpp`。
+```bash
+python3 cloud/install_diting_recovery_crypto.py /home/android/uwu-diting --apply
+```
 
-每个启用设备都应验证空锁屏、PIN、密码、图案，以及适用的 Weaver/Gatekeeper
-路径；还需测试错误凭据、硬件限流、服务/密钥缺失、不支持或需要升级的 blob。
-成功后核对 fscrypt 密钥与目录策略、文件名和内容；失败后确认 ADB sideload
-仍正常，重启 Android 后原有凭据仍有效。不能用格式化数据代替解密适配。
+检查：
 
-## 可选的可写 MTP 导出
+```bash
+python3 cloud/install_diting_recovery_crypto.py /home/android/uwu-diting --check
+```
 
-Recovery MTP 的可信 `VID:PID:rw` 配置会改变挂载生命周期，详见
-[MTP 文档](../../mtp/README.md)。没有该配置时默认只读。显式启用后，初始只读
-挂载允许 userdata 日志/前滚恢复；只有 CE 密钥恢复成功后才尝试重新挂载为
-可写。密钥与 locksettings 仍受只读访问规则保护。此路径必须验证设备文件系统
-和 SELinux，不能把“只读挂载”理解为启用可写 MTP 后完全没有磁盘写入。
+之后由维护者显式编译：
 
-## 设计参考
+```bash
+SOONG_ONLY=true BUILD_JOBS=16 bash cloud/build.sh /home/android/uwu-diting recovery
+```
 
-- [AOSP 文件级加密](https://source.android.com/docs/security/features/encryption/file-based)
-- [AOSP metadata 加密](https://source.android.com/docs/security/features/encryption/metadata)
-- [AOSP 硬件封装密钥](https://source.android.com/docs/security/features/encryption/hw-wrapped-keys)
-- [已审查平台源码与版本](source-review.json)
+`cloud/build.sh` 位于 diting **准备仓库**，不在 `bootable/recovery` 中。已部署后
+构建入口只检查，不自动同步或部署解密适配。完整说明和受管文件列表见
+[diting 适配文档](https://github.com/Night-stars-1/uwuaosp-diting/blob/main/cloud/DITING_RECOVERY_CRYPTO.md)。
+CNB 中准备仓库通常为 `/workspace`，旧服务器为 `/home/uwuaosp-diting-prep`；
+实际源码路径以自己的环境为准。
+
+## 后续参考
+
+- [解密链路、ABI 限制、平台策略与测试说明](REFERENCE.zh-CN.md)
+- [通用框架与自定义后端 ABI](../README.zh-CN.md)
+- [最小 Android.bp 模板](device.example.bp)和[最小产品选择模板](device.example.mk)
+  仅提供起点，不包含完整 HAL/策略；以本文步骤补齐。
+- [配置字段示例](profile.example.conf)

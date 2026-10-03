@@ -2,6 +2,10 @@
 
 [English](README.md) | 简体中文 | [Android 17 后端与适配指南](android17/README.zh-CN.md)
 
+**开始适配新设备，请先阅读 [逐文件设备适配指南](android17/README.zh-CN.md)。**
+该指南提供文件清单、完整配置示例、产品/BoardConfig 接入和检查步骤；本文件说明
+通用框架及自定义后端 ABI。
+
 本目录提供可选的**后端集成框架**，并包含默认关闭的
 [Android 17 已有密钥恢复后端](android17/README.zh-CN.md)。后端实现已审查格式的
 metadata、DE、Synthetic Password 和 CE 恢复；每个设备仍需自己的配置、厂商
