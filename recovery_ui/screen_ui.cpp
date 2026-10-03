@@ -839,9 +839,14 @@ bool ScreenRecoveryUI::ReadPattern(recovery_ui::PatternInput& input) {
     pattern_finger_ = {};
     pattern_focus_ = -2;
     if (!accepted) input.Clear();
-    // Clear the pattern from both framebuffer pages on exit.
+    // Replace sensitive pattern pixels with the invoking menu, rather than
+    // flashing a logo while the caller returns to its parent.
+    menu_ = std::move(transition_menu_);
+    menu_transition_ = false;
     update_screen_locked();
     update_screen_locked();
+    transition_menu_ = std::move(menu_);
+    menu_transition_ = true;
   }
   return accepted;
 }
@@ -1108,7 +1113,14 @@ void ScreenRecoveryUI::draw_battery_capacity_locked() {
 
 // Redraw everything on the screen and flip the screen (make it visible).
 // Should only be called with updateMutex locked.
+bool ScreenRecoveryUI::ShouldHoldMenuFrameLocked() const {
+  return menu_transition_ && !menu_ && show_text &&
+      m3e_install_stage_ == InstallStage::NONE && !pattern_input_ &&
+      !(file_viewer_text_ && text_ == file_viewer_text_);
+}
+
 void ScreenRecoveryUI::update_screen_locked() {
+  if (ShouldHoldMenuFrameLocked()) return;
   draw_screen_locked();
   gr_flip();
 }
@@ -1116,6 +1128,7 @@ void ScreenRecoveryUI::update_screen_locked() {
 // Updates only the progress bar, if possible, otherwise redraws the screen.
 // Should only be called with updateMutex locked.
 void ScreenRecoveryUI::update_progress_locked() {
+  if (ShouldHoldMenuFrameLocked()) return;
   if (IsInstallPageLocked() || show_text || !pagesIdentical) {
     draw_screen_locked();  // Must redraw the whole screen
     pagesIdentical = true;
@@ -1488,6 +1501,7 @@ void ScreenRecoveryUI::SetBackground(Icon icon) {
   std::lock_guard<std::mutex> lg(updateMutex);
 
   current_icon_ = icon;
+  if (icon == INSTALLING_UPDATE || icon == ERASING || icon == ERROR) menu_transition_ = false;
   update_screen_locked();
 }
 
@@ -1497,6 +1511,7 @@ void ScreenRecoveryUI::SetInstallStage(InstallStage stage) {
     m3e_install_logs_.clear();
   }
   m3e_install_stage_ = stage;
+  if (stage != InstallStage::NONE) menu_transition_ = false;
   update_screen_locked();
 }
 
@@ -1722,6 +1737,7 @@ void ScreenRecoveryUI::ShowFile(const std::string& filename) {
     old_text_row = text_row_;
     // Swap in the explicit text viewer under the same lock as the renderer.
     text_ = file_viewer_text_;
+    menu_transition_ = false;
   }
   ClearText();
 
@@ -1732,6 +1748,7 @@ void ScreenRecoveryUI::ShowFile(const std::string& filename) {
     text_ = old_text;
     text_col_ = old_text_col;
     text_row_ = old_text_row;
+    menu_transition_ = true;
     update_screen_locked();
   }
 }
@@ -1870,6 +1887,8 @@ size_t ScreenRecoveryUI::ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
   {
     std::lock_guard<std::mutex> lock(updateMutex);
     menu_ = std::move(menu);
+    transition_menu_.reset();
+    menu_transition_ = false;
     update_screen_locked();
   }
 
@@ -1881,7 +1900,8 @@ size_t ScreenRecoveryUI::ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
       if (evt.key() == static_cast<int>(KeyError::INTERRUPTED)) {
         // WaitKey() was interrupted.
         std::lock_guard<std::mutex> lock(updateMutex);
-        menu_.reset();
+        transition_menu_ = std::move(menu_);
+        menu_transition_ = true;
         return static_cast<size_t>(KeyError::INTERRUPTED);
       }
       if (evt.key() == static_cast<int>(KeyError::TIMED_OUT)) {  // WaitKey() timed out.
@@ -1968,7 +1988,8 @@ size_t ScreenRecoveryUI::ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
 
   {
     std::lock_guard<std::mutex> lock(updateMutex);
-    menu_.reset();
+    transition_menu_ = std::move(menu_);
+    menu_transition_ = true;
   }
 
   return chosen_item;

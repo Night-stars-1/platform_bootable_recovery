@@ -273,42 +273,53 @@ void Result(Device* device, bool success, bool started) {
   }
   ui->SetInstallStage(Stage::NONE);
 }
-}  // namespace
-
-void FlashPartitionImage(Device* device) {
-  auto ui = device->GetUI();
-  if (const auto* blocker = FlashBlocker(device)) {
-    LOG(ERROR) << "Recovery image flash blocked: " << blocker;
-    Notice(device, blocker);
-    return;
+bool ChooseFlashTarget(Device* device, const std::vector<Target>& targets,
+                       const std::vector<std::string>& items, const std::string& path,
+                       uint64_t size, Target* selected) {
+  const auto filename = path.substr(path.find_last_of('/') + 1);
+  for (;;) {
+    if (device->GetUI()->IsKeyInterrupted()) return false;
+    const auto picked = Select(device,
+        {"Choose target partition", "Current slot: " + GetProperty("ro.boot.slot_suffix", "none")}, items);
+    if (picked >= targets.size()) return false;
+    const auto& target = targets[picked];
+    for (;;) {
+      if (device->GetUI()->IsKeyInterrupted()) return false;
+      const auto review = Select(device,
+          {"Review image flash", "This overwrites the selected partition. It does not switch slots.",
+           "Image compatibility and rollback protection are your responsibility."}, {"Cancel", "Continue"});
+      if (review != 1) break;  // Back to target selection.
+      const auto confirmation = Select(device,
+          {"Confirm image flash", filename.substr(0, 72), "Target: " + target.name,
+           "Image bytes: " + std::to_string(size)}, {"Cancel", "Flash selected partition"});
+      if (confirmation != 1) continue;  // Back to review; no write or USB change.
+      *selected = target;
+      return true;
+    }
   }
-  const auto source = Select(device, {"Flash partition image"}, {"Internal storage", "Choose IMG from /tmp", "Cancel"});
-  std::string root;
-  if (source == 0) {
-    if (!UnlockRecoveryStorage(device)) return;
-    root = recovery_crypto::UserStoragePath(0);
-  } else if (source == 1) root = "/tmp";
-  else return;
-  const auto path = ChooseRecoveryStorageFile(device, root, ".img", "Choose partition image");
-  if (path.empty()) return;
+}
+
+// False returns to the file picker; true means an operation reached its result.
+bool FlashImage(Device* device, const std::string& root, const std::string& path) {
+  auto ui = device->GetUI();
   unique_fd input = OpenImage(root, path);
   struct stat st{};
   if (input.get() < 0 || fstat(input.get(), &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
       static_cast<uint64_t>(st.st_size) > kMaxImage) {
     Notice(device, "Image is unreadable, empty or exceeds 512 MiB.");
-    return;
+    return false;
   }
   const uint64_t size = st.st_size;
   std::array<uint8_t, 32> selected_digest{};
   if (!Digest(input.get(), size, &selected_digest)) {
     Notice(device, "Cannot read the complete image. Finish uploading it first.");
-    return;
+    return false;
   }
   std::array<uint8_t, 4096> header{};
   const auto header_bytes = std::min<uint64_t>(header.size(), size);
   if (!android::base::ReadFullyAtOffset(input.get(), header.data(), header_bytes, 0)) {
     Notice(device, "Image is unreadable, empty or exceeds 512 MiB.");
-    return;
+    return false;
   }
   std::vector<Target> targets;
   std::vector<std::string> items;
@@ -320,21 +331,14 @@ void FlashPartitionImage(Device* device) {
   }
   if (targets.empty()) {
     Notice(device, "No compatible physical partition. Sparse and logical images require fastbootd.");
-    return;
+    return false;
   }
-  const auto picked = Select(device, {"Choose target partition", "Current slot: " + GetProperty("ro.boot.slot_suffix", "none")}, items);
-  if (picked >= targets.size()) return;
-  const auto& target = targets[picked];
-  if (Select(device, {"Review image flash", "This overwrites the selected partition. It does not switch slots.",
-        "Image compatibility and rollback protection are your responsibility."}, {"Cancel", "Continue"}) != 1) return;
-  const auto filename = path.substr(path.find_last_of('/') + 1);
-  if (Select(device, {"Confirm image flash", filename.substr(0, 72), "Target: " + target.name,
-        "Image bytes: " + std::to_string(size)},
-        {"Cancel", "Flash selected partition"}) != 1) return;
+  Target target;
+  if (!ChooseFlashTarget(device, targets, items, path, size, &target)) return false;
 
   // Nothing above changes USB or writes a block device. Stop MTP only after
   // explicit confirmation, then use a sealed copy for all validation/writes.
-  if (!recovery_mtp::Stop()) { Notice(device, "Could not stop USB file transfer. Please retry."); return; }
+  if (!recovery_mtp::Stop()) { Notice(device, "Could not stop USB file transfer. Please retry."); return false; }
   ui->SetProgressType(RecoveryUI::EMPTY);
   ui->SetInstallStage(Stage::FLASH_PREPARING);
   unique_fd staged;
@@ -358,4 +362,34 @@ void FlashPartitionImage(Device* device) {
   }
   Result(device, success, started);
   recovery_mtp::Start();
+  return true;
+}
+}  // namespace
+
+void FlashPartitionImage(Device* device) {
+  if (const auto* blocker = FlashBlocker(device)) {
+    LOG(ERROR) << "Recovery image flash blocked: " << blocker;
+    Notice(device, blocker);
+    return;
+  }
+  for (;;) {
+    if (device->GetUI()->IsKeyInterrupted()) return;
+    const auto source = Select(device, {"Flash partition image"},
+        {"Internal storage", "Choose IMG from /tmp", "Cancel"});
+    std::string root;
+    if (source == 0) {
+      if (!UnlockRecoveryStorage(device)) continue;
+      root = recovery_crypto::UserStoragePath(0);
+    } else if (source == 1) {
+      root = "/tmp";
+    } else {
+      return;  // Back to update methods.
+    }
+    for (;;) {
+      if (device->GetUI()->IsKeyInterrupted()) return;
+      const auto path = ChooseRecoveryStorageFile(device, root, ".img", "Choose partition image");
+      if (path.empty()) break;  // Back to source selection.
+      if (FlashImage(device, root, path)) return;
+    }
+  }
 }

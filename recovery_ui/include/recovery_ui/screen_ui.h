@@ -500,6 +500,11 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   int m3e_menu_bottom_ = 0;
   InstallStage m3e_install_stage_ = InstallStage::NONE;
   std::vector<std::string> m3e_install_logs_;
+  // Retain the visible frame until the next menu/action is ready. Both fields
+  // are protected by updateMutex, like menu_.
+  bool menu_transition_ = false;
+  std::unique_ptr<Menu> transition_menu_;
+  bool ShouldHoldMenuFrameLocked() const;
   bool IsInstallPageLocked() const;
   void DrawInstallPageLocked();
   void DrawPatternPageLocked();
