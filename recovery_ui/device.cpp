@@ -100,6 +100,7 @@ void Device::RemoveMenuItemForAction(Device::BuiltinAction action) {
   ::RemoveMenuItemForAction(g_reboot_actions, action);
   ::RemoveMenuItemForAction(g_settings_actions, action);
   ::RemoveMenuItemForAction(g_maintenance_actions, action);
+  PopulateMenuItems();
 }
 const std::vector<std::string>& Device::GetMenuItems() { return g_menu_items; }
 const std::vector<std::string>& Device::GetMenuHeaders() {

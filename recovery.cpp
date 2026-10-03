@@ -253,6 +253,7 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
   InstallResult status = INSTALL_NONE;
 
   for (;;) {
+    ui->SetInstallStage(RecoveryUI::InstallStage::NONE);
     non_storage_items = 1; // ADB sideload
 
     items.clear();
@@ -297,6 +298,12 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
       if (chosen < static_cast<int>(non_storage_items) ||
           static_cast<size_t>(chosen - non_storage_items) >= volumes.size()) break;
       status = ApplyFromStorage(device, volumes[chosen - non_storage_items]);
+    }
+    if (status == INSTALL_NONE) {
+      // Cancelling a child returns to update methods, not the main menu.
+      ui->ClearText();
+      ui->ShowText(true);
+      continue;
     }
     break;
   }
@@ -676,7 +683,7 @@ change_menu:
             return Device::NO_ACTION;  // reboot if logs aren't visible
           }
         } else if (status == INSTALL_NONE) {
-          // The logo-only transition was redrawn above.
+          // The next menu replaces the cancelled page without a transition.
         } else {
           ui->SetBackground(RecoveryUI::ERROR);
           ui->Print("Installation aborted.\n");
@@ -696,7 +703,6 @@ change_menu:
         android::base::SetProperty("ro.adb.secure.recovery", "0");
         android::base::SetProperty("ctl.restart", "adbd");
         device->RemoveMenuItemForAction(Device::ENABLE_ADB);
-        device->GoHome();
         ui->Print("Enabled ADB.\n");
         break;
 
