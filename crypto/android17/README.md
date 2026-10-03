@@ -146,9 +146,9 @@ python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android --c
 ```
 
 None of these commands compiles, enables a device profile, accesses a phone, or
-reads real user keys. The exact reviewed revisions and format-bearing source
-hashes are recorded in `source-review.json`. A platform update that changes these
-sources requires a new review before accepting its key/protector formats.
+reads real user keys. No source hash manifest is required. When updating Android,
+maintainers must check that the SP, vold and keystore2 formats still match the
+backend. Dependency declarations and policy patch conflicts are checked separately.
 
 The helper also adds `recovery_available: true` to the reviewed
 `aidl-analyzer-main` static library in `system/tools/aidl/Android.bp`: AIDL
@@ -361,7 +361,6 @@ Primary design references:
 - https://source.android.com/docs/security/features/encryption/file-based
 - https://source.android.com/docs/security/features/encryption/metadata
 - https://source.android.com/docs/security/features/encryption/hw-wrapped-keys
-- Pinned platform sources listed in `source-review.json`.
 
 ## Optional writable media export
 

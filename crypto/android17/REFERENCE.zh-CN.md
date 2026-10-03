@@ -167,8 +167,8 @@ python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android --c
 ```
 
 这些命令不编译、不启用设备配置、不访问手机，也不读取真实用户密钥。
-已审查的平台版本与格式相关源码哈希记录在 [source-review.json](source-review.json)。
-平台更新改变这些源码时，需要重新审查。
+部署不要求创建源码哈希清单。平台更新时，维护者需要确认 SP、vold 和
+keystore2 的格式与后端实现仍匹配。
 
 helper 还给 `system/tools/aidl/Android.bp` 中的 `aidl-analyzer-main` 静态库增加
 `recovery_available: true`。AIDL 会向生成的 C++ analyzer 传播接口的 Recovery
@@ -349,4 +349,3 @@ Recovery MTP 的可信 `VID:PID:rw` 配置会改变挂载生命周期，详见
 - [AOSP 文件级加密](https://source.android.com/docs/security/features/encryption/file-based)
 - [AOSP metadata 加密](https://source.android.com/docs/security/features/encryption/metadata)
 - [AOSP 硬件封装密钥](https://source.android.com/docs/security/features/encryption/hw-wrapped-keys)
-- [已审查平台源码与版本](source-review.json)
