@@ -154,6 +154,7 @@ inline constexpr Translation kTranslations[] = {
   {"Please wait","请稍候"},
   {"Flash partition image","刷入分区镜像"},
   {"Choose an IMG and a physical partition","选择 IMG 文件与物理分区"},
+  {"Internal storage","内部存储"},
   {"Choose IMG from /tmp","从 /tmp 选择 IMG"},
   {"Choose partition image","选择分区镜像"},
   {"Choose target partition","选择目标分区"},
