@@ -48,13 +48,18 @@ OTA 安装、签名校验、擦除确认等逻辑沿用上游实现。
 镜像与分区均限制为 512 MiB，并保留至少 64 MiB 可用内存；内存不足时在写入前失败。
 若旧分区尾部存在 AVB footer，拒绝比该分区短的镜像，需使用按分区大小填充的完整镜像；
 不会擦除镜像末尾之外的扇区。只允许已解锁设备，Virtual A/B 有待验证更新/合并时拒绝写入。
+解锁判断接受 `ro.boot.flash.locked=0`、`ro.boot.vbmeta.device_state=unlocked` 或
+`ro.boot.verifiedbootstate=orange`；后者适用于 Recovery 未提供前两个属性的设备。
+任何明确的锁定信号优先拒绝写入；属性全部缺失或包含未知值时也拒绝写入。
+阻止操作的提示分别说明锁定、解锁状态未知、OTA 更新未完成或快照状态无法确认，按钮为“返回”。
 不会执行签名验证、设备匹配或防回滚验证，因此格式和读回验证成功**不等于可以开机**。
 `system`、`vendor`、`product`、`vendor_dlkm`、`super` 等使用 fastbootd/完整 OTA；
 不提供引导程序、固件、密钥/校准分区的任意写入入口。
 
 共用实现位于 `install/image_flash.cpp`，不包含 Diting 特定路径；设备继续提供常规 by-name
 链接、SELinux 分区权限和解密适配。本次未运行 Android/native 编译或实机刷入测试。
-格式测试源码为 `install/image_format_test.cpp`，构建目标 `recovery_image_format_test`（host gtest，
+格式和解锁状态测试源码为 `install/image_format_test.cpp`、`install/image_flash_policy_test.cpp`，
+构建目标 `recovery_image_format_test`（host gtest，
 不会依赖不存在的 Recovery gtest 变体）。需要维护者自行构建和运行。
 
 交互式 ADB sideload 使用实际安装后端驱动的 M3E 页面：等待更新包 → 签名校验 → 安装 → 结果。

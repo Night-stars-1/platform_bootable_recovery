@@ -2,6 +2,7 @@
 #include "install/image_flash.h"
 #include "install/crypto.h"
 #include "image_format.h"
+#include "image_flash_policy.h"
 #include "recovery_crypto/session.h"
 #include "recovery_mtp/controller.h"
 #include "recovery_utils/roots.h"
@@ -49,19 +50,32 @@ size_t Select(Device* device, const std::vector<std::string>& headers,
   return device->GetUI()->ShowMenu(headers, items, 0, true,
       std::bind(&Device::HandleMenuKey, device, std::placeholders::_1, std::placeholders::_2));
 }
-bool Notice(Device* device, const std::string& text) {
-  return Select(device, {"Flash partition image", text}, {"Continue"}) == 0;
+void Notice(Device* device, const std::string& text) {
+  Select(device, {"Flash partition image", text}, {"Back"});
 }
-bool IdleAndUnlocked() {
+const char* FlashBlocker(Device* device) {
   // No unlock operation or AVB changes are performed by this feature.
-  if (GetProperty("ro.boot.flash.locked", "") != "0" ||
-      GetProperty("ro.boot.vbmeta.device_state", "") == "locked") return false;
-  if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
-    if (ensure_path_mounted("/metadata") != 0) return false;
-    auto manager = android::snapshot::SnapshotManager::New();
-    if (!manager || manager->GetUpdateState() != android::snapshot::UpdateState::None) return false;
+  const auto flash_locked = GetProperty("ro.boot.flash.locked", "");
+  const auto vbmeta_state = GetProperty("ro.boot.vbmeta.device_state", "");
+  const auto verified_boot_state = GetProperty("ro.boot.verifiedbootstate", "");
+  const auto state = recovery_image::GetBootloaderState(flash_locked, vbmeta_state, verified_boot_state);
+  LOG(INFO) << "Recovery image flash boot state: flash.locked='" << flash_locked
+            << "' vbmeta.device_state='" << vbmeta_state
+            << "' verifiedbootstate='" << verified_boot_state << "'";
+  if (state == recovery_image::BootloaderState::Locked) return "Bootloader is locked. Cannot flash a partition image.";
+  if (state != recovery_image::BootloaderState::Unlocked) return "Cannot confirm bootloader unlock status. No partition will be written.";
+  if (device->GetReason().value_or("") == "update_in_progress") {
+    return "An OTA update is pending. Cannot flash a partition image.";
   }
-  return true;
+  if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
+    if (ensure_path_mounted("/metadata") != 0) return "Cannot verify OTA snapshot state. No partition will be written.";
+    auto manager = android::snapshot::SnapshotManager::New();
+    if (!manager) return "Cannot verify OTA snapshot state. No partition will be written.";
+    if (manager->GetUpdateState() != android::snapshot::UpdateState::None) {
+      return "An OTA update is pending. Cannot flash a partition image.";
+    }
+  }
+  return nullptr;
 }
 bool NotMounted(dev_t device) {
   FILE* mounts = setmntent("/proc/mounts", "r");
@@ -190,9 +204,15 @@ bool DtboPayloadsValid(int image, const uint8_t* header) {
   }
   return true;
 }
-bool WriteAndVerify(int image, const Target& target, uint64_t size, RecoveryUI* ui, bool* started) {
+bool WriteAndVerify(int image, const Target& target, uint64_t size, Device* device, bool* started) {
+  auto ui = device->GetUI();
+  if (const auto* blocker = FlashBlocker(device)) {
+    LOG(ERROR) << "Recovery image flash blocked: " << blocker;
+    ui->Print("%s\n", blocker);
+    return false;
+  }
   Target current;
-  if (!IdleAndUnlocked() || !Inspect(target.name, &current) || current.path != target.path ||
+  if (!Inspect(target.name, &current) || current.path != target.path ||
       current.device != target.device || current.size != target.size || size > current.size) return false;
   std::array<uint8_t, 32> expected{}, actual{};
   if (!Digest(image, size, &expected)) return false;
@@ -257,8 +277,9 @@ void Result(Device* device, bool success, bool started) {
 
 void FlashPartitionImage(Device* device) {
   auto ui = device->GetUI();
-  if (device->GetReason().value_or("") == "update_in_progress" || !IdleAndUnlocked()) {
-    Notice(device, "Bootloader must be unlocked and no OTA update may be pending.");
+  if (const auto* blocker = FlashBlocker(device)) {
+    LOG(ERROR) << "Recovery image flash blocked: " << blocker;
+    Notice(device, blocker);
     return;
   }
   const auto source = Select(device, {"Flash partition image"}, {"Internal storage", "Choose IMG from /tmp", "Cancel"});
@@ -327,7 +348,7 @@ void FlashPartitionImage(Device* device) {
     if (success && target.base == "dtbo") success = DtboPayloadsValid(staged.get(), header.data());
     if (!success) LOG(ERROR) << "Recovery image: source changed or format validation failed before writing";
   }
-  if (success) success = WriteAndVerify(staged.get(), target, size, ui, &started);
+  if (success) success = WriteAndVerify(staged.get(), target, size, device, &started);
   staged.reset();
   input.reset();
   if (!success) {
