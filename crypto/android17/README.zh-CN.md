@@ -19,7 +19,7 @@ ADB 命令在正常 Android 系统执行；`rg` 在源码根目录执行，`.con
 | 条件 | 查询方法 |
 | --- | --- |
 | 有真实 AIDL KeyMint | `adb -d shell service check android.hardware.security.keymint.IKeyMintDevice/default`；实例名以 VINTF 为准 |
-| 能获取实际 Gatekeeper / Weaver 实现 | `adb -d shell service list`（AIDL）<br>`adb -d shell lshal`（HIDL）；查找 `gatekeeper`、`weaver`，再核对厂商实现；Weaver 仅在当前凭据使用它时必需 |
+| 能获取实际 Gatekeeper / Weaver 实现 | 见 [Gatekeeper 和 Weaver 查询与配置](#gatekeeper-和-weaver-查询与配置) |
 | 内核支持设备实际的 fscrypt、metadata 加密和硬件封装密钥路径 | `rg 'CONFIG_.*(ENCRYPTION\|DEFAULT_KEY\|CRYPTO)' path/to/kernel/.config`<br>`adb -d shell "cat /vendor/etc/fstab.*"`；按 fstab 核对配置，使用 wrapped key 时还需核对[存储驱动支持](https://source.android.com/docs/security/features/encryption/hw-wrapped-keys) |
 | 平台不使用本后端尚未支持的 storage-binding seed | `rg -n -i 'storage.?binding' frameworks/base/services/core/java/com/android/server/locksettings system/vold system/security`；检查是否参与当前存储密钥生成/恢复，不能仅凭无输出判断 |
 
@@ -105,6 +105,39 @@ sharedsecret_services=android.hardware.security.sharedsecret.ISharedSecret/defau
 配置使用 `字段=值`，不要在等号两边或值中加空格，不支持行尾注释或重复字段。
 空值保留等号。注释单独一行并从 `#` 开始。配置文件必须是 root 拥有的普通文件，
 不允许 group/world 写入；由下面的模块安装到 ramdisk，不放在 userdata 中。
+
+### Gatekeeper 和 Weaver 查询与配置
+
+在正常 Android 系统执行，分别查看 AIDL 和 HIDL 实现：
+
+```bash
+adb -d shell service list
+```
+
+```bash
+adb -d shell lshal
+```
+
+查找 `gatekeeper`、`weaver`，常见输出如下；实例名取最后一个 `/` 后面的部分：
+
+```text
+android.hardware.gatekeeper.IGatekeeper/default
+android.hardware.weaver.IWeaver/default
+android.hardware.gatekeeper@1.0::IGatekeeper/default
+android.hardware.weaver@1.0::IWeaver/default
+```
+
+在 `device/<厂商>/<设备>/recovery-crypto/recovery.crypto.conf` 中修改：
+
+| 找到的实现 | 配置 |
+| --- | --- |
+| AIDL Gatekeeper | `gatekeeper_transport=aidl`，`gatekeeper_instance=实际实例名` |
+| HIDL Gatekeeper | `gatekeeper_transport=hidl`，`gatekeeper_instance=实际实例名` |
+| AIDL / HIDL Weaver | `weaver_transport=aidl` 或 `hidl`，`weaver_instance=实际实例名` |
+| 当前凭据没有使用 Weaver | `weaver_transport=none`，`weaver_instance=` |
+
+例如实例名为 `default`，填写 `gatekeeper_instance=default` 或
+`weaver_instance=default`。还需核对厂商实现；没查到服务不代表凭据没有使用 Weaver。
 
 需要 HIDL 时，要确认 Recovery 的本地 passthrough 实现实际存在；只有正常
 Android 的 HIDL 服务进程或 VINTF 声明还不够。没有可用 passthrough 的设备需要
