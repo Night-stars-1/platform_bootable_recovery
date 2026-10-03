@@ -12,37 +12,16 @@
 SharedSecret**；服务组合不同的设备按后面的分支调整。示例中的厂商库、服务路径、
 策略域和 fstab 必须来自本设备，不能仅改设备名就直接使用。
 
-## 0. 先判断是否能使用这个后端
+## 0. 前提条件
 
-开始写设备文件前，确认以下条件：
+ADB 命令在正常 Android 系统执行；`rg` 在源码根目录执行，`.config` 路径替换为实际路径。
 
-| 条件 | 从哪里确认 | 不满足时怎么办 |
-| --- | --- | --- |
-| 平台使用当前后端支持的 Android 17 格式 | 对照当前平台的 SP、vold 和 keystore2 实现 | 格式不同时，需要更新后端及依赖 |
-| 有真实 AIDL KeyMint | 正常系统 VINTF、HAL 可执行文件、init RC | 只有 HIDL Keymaster 时需要另行实现兼容适配 |
-| 能获取实际 Gatekeeper / Weaver 实现 | 正常系统 VINTF、服务、passthrough 库及 SP 使用路径 | 缺失时不能完成对应凭据验证 |
-| 内核支持设备实际的 fscrypt、metadata 加密和硬件封装密钥路径 | 当前内核配置、驱动、正常系统 fstab | 先处理内核支持，不靠修改 conf 绕过 |
-| 平台不使用本后端尚未支持的 storage-binding seed | 当前平台的密钥生成/恢复代码和设备配置 | 需要扩展后端；不能随意填写 `storage_binding=none` |
-
-收集服务名称时，可在正常 Android 启动且已授权 ADB 的手机上查看 AIDL 服务：
-
-```bash
-adb -d shell service list
-```
-
-服务清单只是发现入口，还要对照正常系统的 VINTF、init RC 和已提取程序确认。
-HIDL 另查其 manifest、实现库及正常系统可用的 lshal 信息，不把这条命令当作
-完整 HAL 清单。对厂商 ELF 使用工具链的 `llvm-readelf -d` 查看 `DT_NEEDED`，
-例如在编译服务器已配置该工具路径后：
-
-```bash
-llvm-readelf -d /path/to/vendor-security-service
-```
-
-把路径替换为实际服务文件，递归检查列出的厂商依赖。
-
-不要从手机复制真实密钥或锁屏数据库到仓库。适配依据是平台源码、分区配置、
-HAL 与合法获取的厂商二进制；输入凭据在手机上进行。
+| 条件 | 查询方法 |
+| --- | --- |
+| 有真实 AIDL KeyMint | `adb -d shell service check android.hardware.security.keymint.IKeyMintDevice/default`；实例名以 VINTF 为准 |
+| 能获取实际 Gatekeeper / Weaver 实现 | `adb -d shell service list`（AIDL）<br>`adb -d shell lshal`（HIDL）；查找 `gatekeeper`、`weaver`，再核对厂商实现；Weaver 仅在当前凭据使用它时必需 |
+| 内核支持设备实际的 fscrypt、metadata 加密和硬件封装密钥路径 | `rg 'CONFIG_.*(ENCRYPTION\|DEFAULT_KEY\|CRYPTO)' path/to/kernel/.config`<br>`adb -d shell "cat /vendor/etc/fstab.*"`；按 fstab 核对配置，使用 wrapped key 时还需核对[存储驱动支持](https://source.android.com/docs/security/features/encryption/hw-wrapped-keys) |
+| 平台不使用本后端尚未支持的 storage-binding seed | `rg -n -i 'storage.?binding' frameworks/base/services/core/java/com/android/server/locksettings system/vold system/security`；检查是否参与当前存储密钥生成/恢复，不能仅凭无输出判断 |
 
 ## 1. 要创建哪些文件
 
