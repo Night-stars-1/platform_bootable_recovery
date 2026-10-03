@@ -34,8 +34,15 @@ def routing_test():
         'void ScreenRecoveryUI::SetProgress(',
         'bool ScreenRecoveryUI::IsInstallPageLocked() const',
         'bool ScreenRecoveryUI::IsDesignMenuLocked() const',
-        'bool ScreenRecoveryUI::IsDesignAdbLocked() const'))
+        'bool ScreenRecoveryUI::IsDesignAdbLocked() const',
+        'bool ScreenRecoveryUI::ShouldHoldMenuFrameLocked() const',
+        'void ScreenRecoveryUI::update_screen_locked()',
+        'void ScreenRecoveryUI::update_progress_locked()'))
     result = function(recovery, 'static void ShowInstallResult(')
+    update_menu = function(recovery, 'static InstallResult apply_update_menu(')
+    flash = (ROOT / 'install/image_flash.cpp').read_text(encoding='utf-8')
+    flash_target = function(flash, 'bool ChooseFlashTarget(')
+    flash_entry = function(flash, 'void FlashPartitionImage(')
     return r'''
 #include <cstdio>
 #include <deque>
@@ -51,43 +58,125 @@ struct ScreenRecoveryUI {
   std::mutex updateMutex;std::unique_ptr<TestMenu> menu_;
   InstallStage m3e_install_stage_=InstallStage::NONE;
   std::vector<std::string> m3e_install_logs_;int redraws=0;
-  void update_screen_locked(){++redraws;}
-  void SetInstallStage(InstallStage);bool IsInstallPageLocked() const;
   enum ProgressType {EMPTY,DETERMINATE};ProgressType progressBarType=EMPTY;
   float progressScopeStart=0,progressScopeSize=0,progress=0;
   double progressScopeTime=0,progressScopeDuration=0;std::unique_ptr<int> progress_bar_empty_;
   int ScreenWidth() const{return 1220;}
   void SetProgressType(ProgressType);void ShowProgress(float,float);void SetProgress(float);
-  bool m3e_adb_sideload_=false,terminal_visible_=false,fastbootd_logo_enabled_=false;
+  bool menu_transition_=false,show_text=true,pagesIdentical=false;
+  bool m3e_adb_sideload_=false,terminal_visible_=false;
+  bool fastbootd_logo_enabled_=false;
   bool IsDesignMenuLocked() const;bool IsDesignAdbLocked() const;
-  void* pattern_input_=nullptr;
-  bool menu_transition_=false;
+  void* pattern_input_=nullptr;char** text_=nullptr;char** file_viewer_text_=nullptr;
   void* password_input_=nullptr;void DrawPasswordPageLocked(){++redraws;}
+  void draw_screen_locked(){++redraws;}void draw_foreground_locked(){++redraws;}
+  void update_screen_locked();void update_progress_locked();
+  bool ShouldHoldMenuFrameLocked() const;
+  void SetInstallStage(InstallStage);bool IsInstallPageLocked() const;
 };
 ''' + definitions + r'''
-enum InstallResult {INSTALL_SUCCESS, INSTALL_ERROR, INSTALL_CORRUPT, INSTALL_NONE};
+enum InstallResult {INSTALL_SUCCESS, INSTALL_ERROR, INSTALL_CORRUPT, INSTALL_NONE, INSTALL_KEY_INTERRUPTED};
 struct RecoveryUI {
   using InstallStage = recovery_ui::InstallStage;
   bool visible=true;int logs=0;InstallStage stage=InstallStage::NONE;
+  bool interrupted=false;
   std::deque<size_t> selections;std::vector<InstallStage> stages;
+  std::vector<std::string> titles;
   void SetInstallStage(InstallStage s){stage=s;stages.push_back(s);}
+  void ClearText(){}void ShowText(bool value){visible=value;}
+  bool IsKeyInterrupted(){return interrupted;}
+  void Print(const char*,...){}
   bool IsTextVisible(){return visible;}
-  size_t ShowMenu(const std::vector<std::string>&,const std::vector<std::string>& items,
-      size_t initial,bool menu_only,const std::function<int(int,bool)>&) {
-    assert(items==std::vector<std::string>({"Continue","View recovery logs"}));
-    assert(initial==0 && menu_only && !selections.empty());
+  size_t ShowMenu(const std::vector<std::string>& headers,const std::vector<std::string>& items,
+      size_t initial,bool menu_only,const std::function<int(int,bool)>&,bool=false) {
+    assert(!headers.empty());titles.push_back(headers.front());
+    if(headers.front()=="Install result") {
+      assert(items==std::vector<std::string>({"Continue","View recovery logs"}));
+      assert(menu_only);
+    }
+    assert(initial==0 && !selections.empty());
     auto result=selections.front();selections.pop_front();return result;
   }
   void ShowFile(const std::string& path){assert(stage==InstallStage::NONE);assert(path=="/tmp/recovery.log");++logs;}
 };
 struct Device {
+  enum BuiltinAction{NO_ACTION};
+  static constexpr int kRefresh=-20,kGoBack=-21,kGoHome=-22;
   RecoveryUI ui;RecoveryUI* GetUI(){return &ui;}int HandleMenuKey(int key,bool){return key;}
 };
 struct Paths {
   static Paths Get(){return {};}std::string temporary_log_file(){return "/tmp/recovery.log";}
 };
-''' + result + r'''
+struct VolumeInfo {bool mMountable=true;std::string mLabel="USB";};
+struct VolumeManager {
+  static VolumeManager* Instance(){static VolumeManager manager;return &manager;}
+  void getVolumeInfo(std::vector<VolumeInfo>& volumes){volumes={{}};}
+};
+namespace recovery_mtp {
+int starts=0,stops=0;bool Start(){++starts;return true;}bool Stop(){++stops;return true;}
+}
+bool InitializeVirtiofs(){return false;}bool RecoveryCryptoAvailable(){return true;}
+std::deque<InstallResult> install_results;
+int image_operations=0;
+void FlashPartitionImage(Device*);
+InstallResult NextInstallResult(){assert(!install_results.empty());auto r=install_results.front();install_results.pop_front();return r;}
+InstallResult ApplyFromAdb(Device*,bool,Device::BuiltinAction*){return NextInstallResult();}
+InstallResult ApplyFromEncryptedStorage(Device*){return NextInstallResult();}
+InstallResult ApplyFromVirtiofs(Device*){return NextInstallResult();}
+InstallResult ApplyFromStorage(Device*,VolumeInfo&){return NextInstallResult();}
+struct Target {std::string name;};
+std::string GetProperty(const std::string&,const std::string&){return "_a";}
+size_t Select(Device* d,const std::vector<std::string>& h,const std::vector<std::string>& i){
+  return d->ui.ShowMenu(h,i,0,true,[](int k,bool){return k;});
+}
+const char* FlashBlocker(Device*){return nullptr;}
+void Notice(Device*,const std::string&){}
+bool UnlockRecoveryStorage(Device*){return true;}
+namespace recovery_crypto {std::string UserStoragePath(unsigned){return "/data/media/0";}}
+std::deque<std::string> image_paths;
+std::string ChooseRecoveryStorageFile(Device* d,const std::string&,const std::string&,const std::string& title){
+  d->ui.titles.push_back(title);assert(!image_paths.empty());
+  auto path=image_paths.front();image_paths.pop_front();return path;
+}
+bool FlashImage(Device*,const std::string&,const std::string&){++image_operations;return true;}
+#define LOG(...) std::cout
+''' + flash_entry + '\n#undef LOG\n' + result + '\n' + update_menu + '\n' + flash_target + r'''
+void CheckNavigation() {
+  for(size_t child:{0,1,2,3}) {
+    Device d;Device::BuiltinAction reboot=Device::NO_ACTION;
+    d.ui.selections={child,static_cast<size_t>(Device::kGoBack)};
+    if(child==1) d.ui.selections={1,2,static_cast<size_t>(Device::kGoBack)};
+    else install_results={INSTALL_NONE};
+    assert(apply_update_menu(&d,&reboot)==INSTALL_NONE);
+    assert(d.ui.titles.front()=="Apply update" && d.ui.titles.back()=="Apply update");
+    assert(std::count(d.ui.titles.begin(),d.ui.titles.end(),"Apply update")==2);
+    assert(d.ui.selections.empty() && install_results.empty());
+  }
+  Device success;Device::BuiltinAction reboot=Device::NO_ACTION;
+  success.ui.selections={2};install_results={INSTALL_SUCCESS};
+  assert(apply_update_menu(&success,&reboot)==INSTALL_SUCCESS);
+  assert(success.ui.titles.size()==1);
+  Device interrupted;interrupted.ui.selections={static_cast<size_t>(RecoveryUI::KeyError::INTERRUPTED)};
+  assert(apply_update_menu(&interrupted,&reboot)==INSTALL_KEY_INTERRUPTED);
+  const auto back=static_cast<size_t>(Device::kGoBack);
+  Device confirmation;Target target;
+  // Target -> review -> confirmation cancel -> review cancel -> target back.
+  confirmation.ui.selections={0,1,0,0,back};
+  assert(!ChooseFlashTarget(&confirmation,{{"boot_b"}},{"boot_b"},"/tmp/boot.img",4096,&target));
+  assert(confirmation.ui.titles==std::vector<std::string>({"Choose target partition","Review image flash",
+      "Confirm image flash","Review image flash","Choose target partition"}));
+  assert(target.name.empty());
+  Device confirmed;confirmed.ui.selections={0,1,1};
+  assert(ChooseFlashTarget(&confirmed,{{"boot_b"}},{"boot_b"},"/tmp/boot.img",4096,&target));
+  assert(target.name=="boot_b");
+  Device source;source.ui.selections={1,2};image_paths={""};
+  auto operations=image_operations;FlashPartitionImage(&source);
+  assert(image_operations==operations && source.ui.selections.empty() && image_paths.empty());
+  assert(source.ui.titles==std::vector<std::string>({"Flash partition image",
+      "Choose partition image","Flash partition image"}));
+}
 void CheckRouting() {
+  CheckNavigation();
   ScreenRecoveryUI design;
   for(const auto& title:{"Settings","Language","Advanced tools","Install result","Flash result","Flash partition image","Confirm or select"}) {
     design.menu_=std::make_unique<TestMenu>(TestMenu{title});assert(!design.IsDesignMenuLocked());
@@ -107,6 +196,21 @@ void CheckRouting() {
   design.SetInstallStage(InstallStage::INSTALLING);assert(design.IsDesignAdbLocked());
   design.menu_=std::make_unique<TestMenu>(TestMenu{"Confirm or select"});assert(!design.IsDesignAdbLocked());
   design.menu_.reset();design.SetInstallStage(InstallStage::SUCCESS);assert(!design.IsDesignAdbLocked());
+  ScreenRecoveryUI transition;transition.menu_transition_=true;
+  auto flips=frame_flips;
+  transition.update_screen_locked();transition.update_progress_locked();
+  assert(transition.redraws==0 && frame_flips==flips);
+  transition.SetInstallStage(InstallStage::WAITING);
+  assert(!transition.ShouldHoldMenuFrameLocked() && transition.redraws==1);
+  transition.m3e_install_stage_=InstallStage::NONE;transition.menu_transition_=true;
+  char* viewer=nullptr;transition.file_viewer_text_=&viewer;transition.text_=&viewer;
+  assert(!transition.ShouldHoldMenuFrameLocked());
+  transition.text_=nullptr;transition.pattern_input_=&viewer;
+  assert(!transition.ShouldHoldMenuFrameLocked());
+  transition.pattern_input_=nullptr;transition.show_text=false;
+  assert(!transition.ShouldHoldMenuFrameLocked());
+  transition.show_text=true;transition.menu_=std::make_unique<TestMenu>(TestMenu{"Apply update"});
+  assert(!transition.ShouldHoldMenuFrameLocked());
   ScreenRecoveryUI ui;assert(!ui.IsInstallPageLocked());
   ui.SetInstallStage(InstallStage::WAITING);assert(ui.IsInstallPageLocked());
   ui.menu_=std::make_unique<TestMenu>(TestMenu{"ADB Sideload"});assert(ui.IsInstallPageLocked());

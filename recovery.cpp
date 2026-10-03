@@ -316,7 +316,8 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
     if (chosen == item_image) {
       FlashPartitionImage(device);
       // This is a separate image operation, not an OTA installation result.
-      return INSTALL_NONE;
+      if (ui->IsKeyInterrupted()) return INSTALL_KEY_INTERRUPTED;
+      continue;
     } else if (chosen == item_sideload) {
       if (!stop_mtp_for_install()) return INSTALL_ERROR;
       status = ApplyFromAdb(device, false /* rescue_mode */, reboot_action);
