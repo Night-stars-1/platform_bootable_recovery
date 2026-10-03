@@ -257,6 +257,7 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
 
   for (;;) {
     ui->SetInstallStage(RecoveryUI::InstallStage::NONE);
+    recovery_mtp::Start();
     non_storage_items = 1; // ADB sideload
 
     items.clear();
