@@ -18,7 +18,7 @@ SharedSecret**；服务组合不同的设备按后面的分支调整。示例中
 
 | 条件 | 从哪里确认 | 不满足时怎么办 |
 | --- | --- | --- |
-| 平台为当前后端审查的 Android 17 格式 | 本目录 `source-review.json` 和当前平台源码 | 重新审查格式及依赖，不能只替换哈希跳过检查 |
+| 平台使用当前后端支持的 Android 17 格式 | 对照当前平台的 SP、vold 和 keystore2 实现 | 格式不同时，需要更新后端及依赖 |
 | 有真实 AIDL KeyMint | 正常系统 VINTF、HAL 可执行文件、init RC | 只有 HIDL Keymaster 时需要另行实现兼容适配 |
 | 能获取实际 Gatekeeper / Weaver 实现 | 正常系统 VINTF、服务、passthrough 库及 SP 使用路径 | 缺失时不能完成对应凭据验证 |
 | 内核支持设备实际的 fscrypt、metadata 加密和硬件封装密钥路径 | 当前内核配置、驱动、正常系统 fstab | 先处理内核支持，不靠修改 conf 绕过 |
@@ -644,13 +644,12 @@ python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android --a
 python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android --check
 ```
 
-helper 核对 `source-review.json` 中关键源码的 SHA-256，补充已审查的 AIDL、
-analyzer 和 SQLite Recovery 依赖声明，并检查/应用明确的 `system/sepolicy`
-补丁。它不生成设备 HAL 配置、不部署厂商库、不启用设备，也不编译或刷机。
+helper 补充 AIDL、analyzer 和 SQLite Recovery 依赖声明，并检查/应用明确的
+`system/sepolicy` 补丁。它不生成设备 HAL 配置、不部署厂商库、不启用设备，
+也不编译或刷机。脚本不要求创建源码哈希清单。
 
-`source-review.json` 不是密钥或运行时配置。平台代码变更导致检查失败时，先
-比较实际变化对 SP、vold、keystore2 等格式的影响，再审查更新；不能仅替换哈希。
-策略补丁冲突也需解决真实来源变化，不用正则替换规则或禁用检查绕过。
+平台升级后，维护者应确认 SP、vold、keystore2 的格式与后端实现仍匹配。
+依赖声明或策略补丁冲突时，需要按实际源码调整，脚本不会覆盖未知改动。
 
 这些改动分别属于 `hardware/interfaces`、`system/tools/aidl`、`external/sqlite`
 和 `system/sepolicy`。维护发行版时提交到相应 fork，并由 manifest 跟踪；

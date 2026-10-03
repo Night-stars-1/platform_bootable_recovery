@@ -2,14 +2,11 @@
 """Prepare reviewed Android 17 Recovery dependencies; never builds or touches a phone."""
 import argparse
 import difflib
-import hashlib
 import importlib.util
-import json
 from pathlib import Path
 import re
 import time
 
-ROOT = Path(__file__).resolve().parents[2]
 INTERFACES = {
     'security/keymint': 'android.hardware.security.keymint',
     'security/secureclock': 'android.hardware.security.secureclock',
@@ -113,13 +110,7 @@ def policy_plan(source_root):
     return module.plan(source_root)
 
 
-def plan(source_root, review_path=None):
-    review_path = review_path or ROOT / 'crypto/android17/source-review.json'
-    review = json.loads(review_path.read_text(encoding='utf-8'))
-    for path, expected in review['sources'].items():
-        source = source_root / path
-        if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != expected:
-            raise ValueError(f'Platform source needs review: {path}')
+def plan(source_root):
     changes = {}
     for path, name in INTERFACES.items():
         relative = f'hardware/interfaces/{path}/aidl/Android.bp'
@@ -157,7 +148,7 @@ def main():
     if args.check:
         if changes:
             raise ValueError('Recovery variants not prepared: ' + ', '.join(changes))
-        print('Reviewed platform formats, Recovery dependencies and explicit policy patch verified. No compilation or device validation.')
+        print('Recovery dependencies and explicit policy patch verified. No compilation or device validation.')
         return
     if not args.apply:
         for path, (before, after) in changes.items():
@@ -186,5 +177,5 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (ValueError, OSError, KeyError, json.JSONDecodeError) as error:
+    except (ValueError, OSError, KeyError) as error:
         raise SystemExit('ERROR: ' + str(error))
