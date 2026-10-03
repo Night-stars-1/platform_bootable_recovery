@@ -1,10 +1,6 @@
 # Android 17 Recovery 设备解密适配指南
 
-[English](README.md) | 简体中文 | [技术参考](REFERENCE.zh-CN.md) | [通用框架](../README.zh-CN.md)
-
-本文面向设备树维护者：说明需要创建哪些文件、内容从哪里获取、怎样定义模块、
-怎样接入产品，以及如何检查生成的 Recovery。按步骤完成源码适配后，仍需要
-编译和真机验证；本指南不承诺任意 Android 17 设备都能直接解密。
+[English](README.md) | 简体中文 | [通用框架](../README.zh-CN.md)
 
 示例统一使用 `device/acme/mydevice`、`vendor/acme/mydevice` 和模块前缀
 `mydevice_rec_`。请替换为自己的设备路径和唯一模块名前缀。本文的示例假设有
@@ -21,7 +17,6 @@ ADB 命令在正常 Android 系统执行；`rg` 在源码根目录执行，`.con
 | 有真实 AIDL KeyMint | `adb -d shell service check android.hardware.security.keymint.IKeyMintDevice/default`；实例名以 VINTF 为准 |
 | 能获取实际 Gatekeeper / Weaver 实现 | 见 [Gatekeeper 和 Weaver 查询与配置](#gatekeeper-和-weaver-查询与配置) |
 | 内核支持设备实际的 fscrypt、metadata 加密和硬件封装密钥路径 | `rg 'CONFIG_.*(ENCRYPTION\|DEFAULT_KEY\|CRYPTO)' path/to/kernel/.config`<br>`adb -d shell "cat /vendor/etc/fstab.*"`；按 fstab 核对配置，使用 wrapped key 时还需核对[存储驱动支持](https://source.android.com/docs/security/features/encryption/hw-wrapped-keys) |
-| 平台不使用本后端尚未支持的 storage-binding seed | `rg -n -i 'storage.?binding' frameworks/base/services/core/java/com/android/server/locksettings system/vold system/security`；检查是否参与当前存储密钥生成/恢复，不能仅凭无输出判断 |
 
 ## 1. 要创建哪些文件
 
@@ -102,10 +97,6 @@ sharedsecret_services=android.hardware.security.sharedsecret.ISharedSecret/defau
 | `sharedsecret_services` | 逗号分隔的 AIDL SharedSecret 完整服务名，至少一个，不重复、不加空格 |
 | `sharedsecret_hidl_instances` | 可选；例如 `4.1/default`，仅支持 `4.0/4.1` 的 `default/strongbox` 实例 |
 
-配置使用 `字段=值`，不要在等号两边或值中加空格，不支持行尾注释或重复字段。
-空值保留等号。注释单独一行并从 `#` 开始。配置文件必须是 root 拥有的普通文件，
-不允许 group/world 写入；由下面的模块安装到 ramdisk，不放在 userdata 中。
-
 ### Gatekeeper 和 Weaver 查询与配置
 
 在正常 Android 系统执行，分别查看 AIDL 和 HIDL 实现：
@@ -162,10 +153,7 @@ sharedsecret_hidl_instances=4.1/default
 
 ## 3. 编写 `recovery.crypto.fstab`
 
-从**当前正常系统** fstab 复制 `/metadata` 和 `/data` 的真实条目，保留块设备路径、
-文件系统、挂载选项、`fileencryption`、`keydirectory`、`metadata_encryption`。
-常见来源是设备树中的 `rootdir/etc/fstab.*` 或正常系统 `/vendor/etc/fstab.*`。
-不要以老 TWRP/Recovery 的 `ice,wrappedkey` 配置为依据。
+`recovery.crypto.fstab` 用来告诉解密后端，设备的数据分区在哪里，以及使用什么加密方式。
 
 下面是 diting 的示例，其他设备必须替换为自己的条目：
 
@@ -179,9 +167,6 @@ sharedsecret_hidl_instances=4.1/default
 ```text
 块设备路径  挂载点  文件系统  Linux挂载选项  Android fs_mgr选项
 ```
-
-这是解密后端的独立配置，不替换普通 Recovery fstab，也不在 init RC 中对它
-调用 `mount_all`、fsck 或格式化。实际只读映射和挂载由后端负责。
 
 ## 4. 编写设备 `Android.bp`
 
@@ -665,7 +650,7 @@ helper 补充 AIDL、analyzer 和 SQLite Recovery 依赖声明，并检查/应�
 
 这些改动分别属于 `hardware/interfaces`、`system/tools/aidl`、`external/sqlite`
 和 `system/sepolicy`。维护发行版时提交到相应 fork，并由 manifest 跟踪；
-或在同步这些项目后重新审查和应用。具体补丁范围见 [技术参考](REFERENCE.zh-CN.md)。
+或在同步这些项目后重新审查和应用。具体补丁范围见 [密钥访问补丁](../../tools/crypto/patches/android17-recovery-key-access.patch)。
 
 ## 11. 编译前和镜像打包后检查什么
 
@@ -733,7 +718,7 @@ adb -d pull /tmp/recovery.log recovery-decrypt.log
 
 `result=0` 为成功，1 不支持，2 服务不可用，3 已有密钥/状态缺失，4 需升级密钥，
 5 凭据拒绝，6 硬件限流，7 其他 I/O/格式/密码学错误。`source=none code=0` 不是
-成功标记。完整子阶段含义见 [诊断技术参考](REFERENCE.zh-CN.md#解锁失败怎么定位)。
+成功标记。完整子阶段含义见 [诊断阶段定义](diagnostic.h)。
 
 按实际设备能收集到的 init、内核、SELinux AVC 和厂商服务日志继续定位；诊断
 不依赖 logcat。不要在日志加入 PIN、图案、密钥或认证令牌，也不自动反复尝试
@@ -807,7 +792,6 @@ CNB 中准备仓库通常为 `/workspace`，旧服务器为 `/home/uwuaosp-ditin
 
 ## 后续参考
 
-- [解密链路、ABI 限制、平台策略与测试说明](REFERENCE.zh-CN.md)
 - [通用框架与自定义后端 ABI](../README.zh-CN.md)
 - [最小 Android.bp 模板](device.example.bp)和[最小产品选择模板](device.example.mk)
   仅提供起点，不包含完整 HAL/策略；以本文步骤补齐。
