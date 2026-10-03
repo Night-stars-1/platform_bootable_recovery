@@ -1,5 +1,7 @@
 # Android 17 existing-key recovery backend
 
+English | [简体中文](README.zh-CN.md)
+
 This directory now contains an implementation, not the unsupported callback
 skeleton in `../examples`. It implements the existing-key unlock chain for the
 reviewed Android 17 platform formats. **It has not been compiled, linked, run on

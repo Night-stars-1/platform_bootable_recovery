@@ -1,5 +1,7 @@
 # Optional Recovery storage decryption
 
+English | [简体中文](README.zh-CN.md)
+
 This repository contains the optional **backend integration layer** and an opt-in
 [Android 17 existing-key backend implementation](android17/README.md). The latter
 implements metadata, DE, Synthetic Password and CE recovery for reviewed formats
