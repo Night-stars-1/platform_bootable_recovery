@@ -646,7 +646,7 @@ python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android --c
 
 helper 补充 AIDL、analyzer 和 SQLite Recovery 依赖声明，并检查/应用明确的
 `system/sepolicy` 补丁。它不生成设备 HAL 配置、不部署厂商库、不启用设备，
-也不编译或刷机。脚本不要求创建源码哈希清单。
+也不编译或刷机。脚本不要求创建源码哈希清单或部署记录 JSON。
 
 平台升级后，维护者应确认 SP、vold、keystore2 的格式与后端实现仍匹配。
 依赖声明或策略补丁冲突时，需要按实际源码调整，脚本不会覆盖未知改动。
@@ -775,6 +775,11 @@ python3 cloud/install_diting_recovery_crypto.py /home/android/uwu-diting --apply
 ```bash
 python3 cloud/install_diting_recovery_crypto.py /home/android/uwu-diting --check
 ```
+
+Diting 的 `--check` 检查已接入的实际文件与依赖，不比较模板内容，也不需要
+部署 JSON。直接修改设备树适配文件后可编译；修改准备仓库中的模板时，只有主动
+执行 `--apply` 才会部署到 Android 源码，覆盖前会备份。`--remove` 取消产品/
+BoardConfig 接入并保留适配文件。
 
 之后由维护者显式编译：
 
