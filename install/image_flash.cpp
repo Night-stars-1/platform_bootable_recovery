@@ -106,13 +106,26 @@ bool Inspect(const std::string& name, Target* target) {
     unique_fd fd(open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
     struct stat st{};
     uint64_t size = 0;
-    if (fd.get() < 0 || fstat(fd.get(), &st) || !S_ISBLK(st.st_mode) ||
-        ioctl(fd.get(), BLKGETSIZE64, &size) || !size || size > kMaxImage || !NotMounted(st.st_rdev)) continue;
+    if (fd.get() < 0 || fstat(fd.get(), &st)) {
+      PLOG(WARNING) << "Recovery image: cannot inspect partition " << name;
+      continue;
+    }
+    if (!S_ISBLK(st.st_mode)) continue;
+    if (ioctl(fd.get(), BLKGETSIZE64, &size)) {
+      PLOG(WARNING) << "Recovery image: cannot read partition capacity " << name;
+      continue;
+    }
+    if (!size || size > kMaxImage || !NotMounted(st.st_rdev)) continue;
     // A real partition has this sysfs file. Whole disks, loop and dm/snapshot
     // devices do not; no logical partition or super container is accepted.
     const auto sysfs = "/sys/dev/block/" + std::to_string(major(st.st_rdev)) + ":" +
                        std::to_string(minor(st.st_rdev)) + "/partition";
-    if (access(sysfs.c_str(), R_OK)) continue;
+    // Only its existence is needed. R_OK additionally asks SELinux for file
+    // read permission, which enforcing Recovery need not have for this marker.
+    if (access(sysfs.c_str(), F_OK)) {
+      PLOG(WARNING) << "Recovery image: cannot confirm physical partition " << name;
+      continue;
+    }
     *target = {name, base, path, st.st_rdev, size};
     return true;
   }
@@ -233,6 +246,12 @@ bool WriteAndVerify(int image, const Target& target, uint64_t size, Device* devi
       ui->Print("%s\n", "Existing AVB footer requires a full partition-sized image.");
       return false;
     }
+  }
+  // Verify cache invalidation is permitted before the first partition write.
+  // A missing ioctl grant must not leave a flashed but unverified partition.
+  if (ioctl(output.get(), BLKFLSBUF)) {
+    PLOG(ERROR) << "Recovery image: cache invalidation preflight for " << target.name;
+    return false;
   }
   ui->SetInstallStage(Stage::FLASH_WRITING);
   ui->SetProgressType(RecoveryUI::DETERMINATE);
