@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: The uwuAOSP Project
 # SPDX-License-Identifier: Apache-2.0
-"""Generate the small, licensed ASCII Roboto atlas used by native Recovery.
+"""Generate the small, licensed ASCII Google Sans atlas used by native Recovery.
 Requires Pillow on the development host only. No font libraries run on device.
 Writes recovery_ui/include/recovery_ui/m3e_font.h (override with --out DIR).
 The BASIC layout engine is pinned so the output does not depend on whether
@@ -18,10 +18,10 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--out', type=Path, default=OUT, help='output directory')
 args = parser.parse_args()
 SIZE = 96
-source = ROOT / 'fonts/Roboto.ttf'
+source = ROOT / 'fonts/GoogleSans.ttf'
 metadata = json.loads((ROOT / 'fonts/SOURCE.json').read_text())
 assert hashlib.sha256(source.read_bytes()).hexdigest() == metadata[0]['sha256']
-parts = ['// Generated from Roboto, SIL OFL 1.1. See m3e-font-OFL.txt.',
+parts = ['// Generated from Google Sans, SIL OFL 1.1. See m3e-font-OFL.txt.',
          '#pragma once', '#include <cstdint>', 'namespace recovery_m3e { namespace fontdata {',
          'struct Glyph { uint32_t offset, length; uint16_t w, h; int16_t left, top; uint16_t advance; };',
          'inline constexpr int kSize = 96;']
