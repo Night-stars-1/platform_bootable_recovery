@@ -703,6 +703,18 @@ InstallResult InstallPackage(Package* package, const std::string_view package_id
   InstallResult result;
   std::vector<std::string> log_buffer;
 
+  // A/B updates write the inactive slot. Their source can be an open file on
+  // decrypted /data, exposed through FUSE as /sideload/package.zip. Keep /data
+  // mounted for these packages; legacy updaters retain the usual mount setup.
+  bool preserve_data = false;
+  if (package && package->GetType() == PackageType::kFile &&
+      android::base::GetBoolProperty("ro.build.ab_update", false)) {
+    auto zip = package->GetZipArchiveHandle();
+    std::map<std::string, std::string> metadata;
+    preserve_data = zip && ReadMetadataFromPackage(zip, &metadata) &&
+                    get_value(metadata, "ota-type") == OtaTypeToString(OtaType::AB);
+  }
+
   ui->Print("Supported API: %d\n", kRecoveryApiVersion);
 
   ui->Print("Finding update package...\n");
@@ -710,7 +722,7 @@ InstallResult InstallPackage(Package* package, const std::string_view package_id
   if (!package) {
     log_buffer.push_back(android::base::StringPrintf("error: %d", kMapFileFailure));
     result = INSTALL_CORRUPT;
-  } else if (setup_install_mounts() != 0) {
+  } else if (setup_install_mounts(preserve_data) != 0) {
     LOG(ERROR) << "failed to set up expected mounts for install; aborting";
     result = INSTALL_ERROR;
   } else {
