@@ -90,16 +90,23 @@ void Device::GoBack() {
   else current_menu_ = &g_main_actions;
   PopulateMenuItems();
 }
-static void RemoveMenuItemForAction(std::vector<menu_action_t>& menu, Device::BuiltinAction action) {
+static void RemoveMenuItemForAction(std::vector<menu_action_t>& menu, int action) {
   menu.erase(std::remove_if(menu.begin(), menu.end(),
       [action](const auto& entry) { return entry.second == action; }), menu.end());
-  CHECK(!menu.empty());
 }
 void Device::RemoveMenuItemForAction(Device::BuiltinAction action) {
   ::RemoveMenuItemForAction(g_wipe_actions, action);
   ::RemoveMenuItemForAction(g_reboot_actions, action);
   ::RemoveMenuItemForAction(g_settings_actions, action);
   ::RemoveMenuItemForAction(g_maintenance_actions, action);
+  // A user build removes every maintenance action during startup. An empty
+  // optional submenu is valid; hide its entry instead of aborting recovery.
+  if (g_maintenance_actions.empty()) {
+    ::RemoveMenuItemForAction(g_settings_actions, static_cast<int>(MenuRoute::Maintenance));
+    if (current_menu_ == &g_maintenance_actions) {
+      current_menu_ = &g_settings_actions;
+    }
+  }
   PopulateMenuItems();
 }
 const std::vector<std::string>& Device::GetMenuItems() { return g_menu_items; }
