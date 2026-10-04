@@ -163,12 +163,21 @@ unique_fd OpenImage(const std::string& root, const std::string& path) {
 }
 bool EnoughMemory(uint64_t size) {
   std::string info;
-  if (!android::base::ReadFileToString("/proc/meminfo", &info)) return false;
+  if (!android::base::ReadFileToString("/proc/meminfo", &info)) {
+    PLOG(ERROR) << "Recovery image: cannot read /proc/meminfo for staging";
+    return false;
+  }
+  const auto required_kb = (size + 64ULL * 1024 * 1024) / 1024;
   for (const auto& line : android::base::Split(info, "\n")) {
     unsigned long long kb = 0;
-    if (sscanf(line.c_str(), "MemAvailable: %llu kB", &kb) == 1)
-      return kb > (size + 64ULL * 1024 * 1024) / 1024;
+    if (sscanf(line.c_str(), "MemAvailable: %llu kB", &kb) == 1) {
+      if (kb > required_kb) return true;
+      LOG(ERROR) << "Recovery image: insufficient RAM for sealed copy; available="
+                 << kb << " KiB required=" << required_kb << " KiB";
+      return false;
+    }
   }
+  LOG(ERROR) << "Recovery image: /proc/meminfo has no readable MemAvailable value";
   return false;
 }
 bool Digest(int fd, uint64_t size, std::array<uint8_t, 32>* digest, RecoveryUI* ui = nullptr) {
@@ -186,7 +195,7 @@ bool Digest(int fd, uint64_t size, std::array<uint8_t, 32>* digest, RecoveryUI* 
   return EVP_DigestFinal_ex(context.get(), digest->data(), &length) && length == digest->size();
 }
 bool StageImage(int input, uint64_t size, unique_fd* staged) {
-  if (!EnoughMemory(size)) { LOG(ERROR) << "Recovery image: insufficient RAM for sealed copy"; return false; }
+  if (!EnoughMemory(size)) return false;
   staged->reset(memfd_create("recovery-image", MFD_CLOEXEC | MFD_ALLOW_SEALING));
   if (staged->get() < 0) { PLOG(ERROR) << "Recovery image: memfd_create"; return false; }
   std::vector<uint8_t> buffer(kBuffer);
@@ -378,7 +387,7 @@ bool FlashImage(Device* device, const std::string& root, const std::string& path
   staged.reset();
   input.reset();
   if (!success) {
-    PLOG(ERROR) << "Recovery image flash failed for " << target.name << "; write_started=" << started;
+    LOG(ERROR) << "Recovery image flash failed for " << target.name << "; write_started=" << started;
     ui->SetInstallStage(Stage::FLASH_ERROR);
     ui->Print("%s\n", "Image preparation, write or verification failed. Check the recovery log.");
   }
