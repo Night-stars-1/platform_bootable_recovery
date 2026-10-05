@@ -78,6 +78,7 @@ struct ScreenRecoveryUI {
 enum InstallResult {INSTALL_SUCCESS, INSTALL_ERROR, INSTALL_CORRUPT, INSTALL_NONE, INSTALL_KEY_INTERRUPTED};
 struct RecoveryUI {
   using InstallStage = recovery_ui::InstallStage;
+  enum class KeyError : int { TIMED_OUT = -1, INTERRUPTED = -2 };
   bool visible=true;int logs=0;InstallStage stage=InstallStage::NONE;
   bool interrupted=false;
   std::deque<size_t> selections;std::vector<InstallStage> stages;
@@ -706,7 +707,7 @@ def run(cxx, out, ndk_clang=None):
         env = os.environ.copy()
         if Path(cxx).is_absolute():
             env['PATH'] = str(Path(cxx).parent) + os.pathsep + env.get('PATH', '')
-        with Image.open(ROOT / 'res-xxxhdpi/images/uwu_recovery_status.png') as logo:
+        with Image.open(ROOT / 'res-xxxhdpi/images/uwu_recovery_m3e.png') as logo:
             logo.convert('RGB').save(build / 'logo.ppm')
         subprocess.run([str(exe), str(build)], check=True, env=env)
         if ndk_clang:
