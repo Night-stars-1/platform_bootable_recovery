@@ -95,7 +95,7 @@ class DrawInterface {
     return DrawWrappedTextLines(x, y, lines);
   }
   virtual void DrawMenuCard(int y, int width, const std::string& label,
-                            bool selected, bool active) const {
+                            bool selected, bool active, bool /* first */, bool /* last */) const {
     SetColor(active ? UIElement::MENU_SEL_BG_ACTIVE : selected ? UIElement::MENU_SEL_BG : UIElement::MENU_BG);
     DrawHighlightBar(MenuItemPadding(), y, width - 2 * MenuItemPadding(), MenuItemHeight());
     SetColor(selected ? UIElement::MENU_SEL_FG : UIElement::MENU);
@@ -267,8 +267,9 @@ class MenuDrawFunctions : public DrawInterface {
   int DrawMenuPrompt(int x, int y, const std::vector<std::string>& lines) const override {
     return wrappee_.DrawMenuPrompt(x, y, lines);
   }
-  void DrawMenuCard(int y, int width, const std::string& label, bool selected, bool active) const override {
-    wrappee_.DrawMenuCard(y, width, label, selected, active);
+  void DrawMenuCard(int y, int width, const std::string& label, bool selected, bool active,
+                    bool first, bool last) const override {
+    wrappee_.DrawMenuCard(y, width, label, selected, active, first, last);
   }
   void SetColor(UIElement e) const override {
     wrappee_.SetColor(e);
@@ -517,7 +518,8 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   int pattern_focus_ = -2;
   int DrawDashboard(int y, int width, int available, int selected, bool active) const override;
   int DrawMenuPrompt(int x, int y, const std::vector<std::string>& lines) const override;
-  void DrawMenuCard(int y, int width, const std::string& label, bool selected, bool active) const override;
+  void DrawMenuCard(int y, int width, const std::string& label, bool selected, bool active,
+                    bool first, bool last) const override;
 
   // The layout to use.
   int layout_;

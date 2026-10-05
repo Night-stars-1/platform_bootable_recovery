@@ -108,7 +108,7 @@ void Render(const std::string& out,int w,int h,bool zh,int index,bool pixels=fal
     assert(VisibleCount(bottom-layout.menu_y,m.row_height,m.gap)>=rows);
     for(int i=0;i<rows;++i) {
       int row_y=layout.menu_y+i*m.Pitch();
-      DrawCard(c,m,row_y,rows==1?"Cancel":i==0?"Continue":"View recovery logs",i==0,false,p);
+      DrawCard(c,m,row_y,rows==1?"Cancel":i==0?"Continue":"View recovery logs",i==0,false,p,i==0,i==rows-1);
       assert(HitRow(m,0,rows,0,w/2,row_y+m.row_height/2-layout.menu_y)==i);
     }
   }
@@ -145,6 +145,39 @@ void CheckProgress() {
     assert(!c.Has("adb sideload <filename>"));
   }
 }
+void RenderList(const std::string& out,int w,int h,bool zh,int count,int first_index=0,
+                bool pixels=false) {
+  SetScaleBasis(w,h);SetLanguage(zh?Language::Chinese:Language::English);
+  Metrics m(w);auto p=Palette::ForMode(false);PixelCanvas c(w,h,pixels);
+  c.Fill({0,0,w,h},p.background);
+  int top=Dp(w,24);
+  int visible=std::min(count-first_index,VisibleCount(h-2*top,m.row_height,m.gap));
+  const std::vector<std::string> items{"Apply from ADB","Choose ZIP from internal storage",
+                                       "Flash partition image","Choose from USB"};
+  // Render, select and press every visible item, including scrolled list windows.
+  for(int selected=0;selected<visible;++selected)for(bool active:{false,true}) {
+    for(int row=0;row<visible;++row) {
+      int index=first_index+row,y=top+row*m.Pitch();
+      DrawCard(c,m,y,items[index],row==selected,active && row==selected,p,index==0,index==count-1);
+      assert(HitRow(m,top,visible,selected,w/2,y+m.row_height/2,first_index,count)==row);
+      Rect card=m.Card(y);int x=card.x+m.InnerRadius()+Dp(w,1);
+      for(bool bottom:{false,true}) {
+        int edge=bottom?card.y+card.h-1:card.y;
+        bool outer=bottom?index==count-1:index==0;
+        assert(HitRow(m,top,visible,selected,x,edge,first_index,count)==(outer?-1:row));
+        if(pixels) {
+          size_t pixel=(edge*w+x)*3;
+          bool painted=c.rgb[pixel]!=p.background.r || c.rgb[pixel+1]!=p.background.g ||
+                       c.rgb[pixel+2]!=p.background.b;
+          assert(painted==!outer);
+        }
+      }
+      if(row+1<visible)assert(HitRow(m,top,visible,selected,w/2,y+m.row_height,
+                                    first_index,count)==-1);
+    }
+  }
+  if(pixels)c.Write(out+"/grouped-list-"+std::to_string(count)+(zh?"-zh.ppm":"-en.ppm"));
+}
 int main(int argc,char** argv) {
   assert(argc==2);std::string out=argv[1];
   CheckProgress();
@@ -153,7 +186,11 @@ int main(int argc,char** argv) {
 #endif
   for(auto [w,h]:std::vector<std::pair<int,int>>{{1220,2712},{720,1280},{360,640},
         {320,480},{1280,720},{320,240},{1600,2560}})
-    for(bool zh:{false,true})for(int i=0;i<6;++i)Render(out,w,h,zh,i);
+    for(bool zh:{false,true}) {
+      for(int i=0;i<6;++i)Render(out,w,h,zh,i);
+      for(int count:{1,2,4})for(int first=0;first<count;++first)RenderList(out,w,h,zh,count,first);
+    }
   for(bool zh:{false,true})for(int i=0;i<6;++i)Render(out,1220,2712,zh,i,true);
-  std::cout<<"PASS: six stages, two languages, seven screen sizes, centered artwork with compact fallback, progress and touch geometry\n";
+  for(bool zh:{false,true})for(int count:{1,2,4})RenderList(out,1220,2712,zh,count,0,true);
+  std::cout<<"PASS: six stages, two languages, seven screen sizes, grouped lists with selection, scrolling and matching touch geometry\n";
 }

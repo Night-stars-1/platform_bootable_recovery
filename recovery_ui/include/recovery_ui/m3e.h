@@ -53,19 +53,43 @@ struct Metrics {
       char_height(Dp(w,24)),inset(std::max(margin,Dp(w,24))),gap(Dp(w,8)),row_height(Dp(w,76)){}
   Rect Card(int y) const {return {inset,y,width-2*inset,row_height};}
   int Radius() const {return Dp(width,22);}
+  int InnerRadius() const {return Dp(width,4);}
   int Pitch() const {return row_height+gap;}
 };
-inline void Rounded(Canvas& c, Rect b, int radius, Color color) {
+struct CornerRadii { int top,bottom; };
+inline CornerRadii ListCorners(const Metrics& m,bool first,bool last) {
+  return {first?m.Radius():m.InnerRadius(),last?m.Radius():m.InnerRadius()};
+}
+inline CornerRadii ClampCorners(Rect b,CornerRadii radii) {
+  int limit=std::max(0,std::min(b.w,b.h)/2);
+  return {std::clamp(radii.top,0,limit),std::clamp(radii.bottom,0,limit)};
+}
+inline int CornerInset(int radius,int row) {
+  if(row>=radius) return 0;
+  double dy=radius-row-0.5;
+  return static_cast<int>(std::ceil(radius-std::sqrt(radius*radius-dy*dy)-0.5));
+}
+inline void Rounded(Canvas& c, Rect b, CornerRadii radii, Color color) {
   if (b.w <= 0 || b.h <= 0) return;
-  int r = std::max(0, std::min(radius, std::min(b.w, b.h) / 2));
-  if (r == 0) { c.Fill(b, color); return; }
-  c.Fill({b.x, b.y + r, b.w, b.h - 2 * r}, color);
-  for (int y = 0; y < r; ++y) {
-    double dy = r - y - 0.5;
-    int dx = static_cast<int>(std::ceil(r - std::sqrt(r * r - dy * dy) - 0.5));
+  auto r=ClampCorners(b,radii);
+  c.Fill({b.x,b.y+r.top,b.w,b.h-r.top-r.bottom},color);
+  for (int y = 0; y < r.top; ++y) {
+    int dx=CornerInset(r.top,y);
     c.Fill({b.x + dx, b.y + y, b.w - 2 * dx, 1}, color);
+  }
+  for (int y = 0; y < r.bottom; ++y) {
+    int dx=CornerInset(r.bottom,y);
     c.Fill({b.x + dx, b.y + b.h - 1 - y, b.w - 2 * dx, 1}, color);
   }
+}
+inline void Rounded(Canvas& c, Rect b, int radius, Color color) {
+  Rounded(c,b,CornerRadii{radius,radius},color);
+}
+inline bool InRounded(Rect b,CornerRadii radii,int x,int y) {
+  if(!b.Contains(x,y)) return false;
+  auto r=ClampCorners(b,radii);
+  int inset=std::max(CornerInset(r.top,y-b.y),CornerInset(r.bottom,b.y+b.h-1-y));
+  return x>=b.x+inset && x<b.x+b.w-inset;
 }
 inline bool InRounded(Rect b, int r, int x, int y) {
   if (!b.Contains(x, y)) return false;
@@ -135,13 +159,22 @@ inline void DrawIcon(Canvas& c, Rect b, Icon icon, Color color) {
 inline int VisibleCount(int height,int row,int gap) {
   return row<=0 || gap<0 || height<row ? 0 : (height+gap)/(row+gap);
 }
-inline int HitRow(const Metrics& m,int top,int count,int,int x,int y) {
+inline int HitRow(const Metrics& m,int top,int count,int,int x,int y,
+                  int first_index=0,int total_count=-1) {
   if(y<top || count<=0) return -1;
   int row=(y-top)/m.Pitch();
   if(row>=count) return -1;
-  return InRounded(m.Card(top+row*m.Pitch()),m.Radius(),x,y)?row:-1;
+  if(total_count<0) total_count=count;
+  int index=first_index+row;
+  return InRounded(m.Card(top+row*m.Pitch()),ListCorners(m,index==0,index==total_count-1),x,y)?row:-1;
 }
 inline Rect Inset(Rect r,int amount) {return {r.x+amount,r.y+amount,r.w-2*amount,r.h-2*amount};}
+inline void Surface(Canvas& c,Rect b,CornerRadii radii,Color bg,bool selected,Color ring,int width) {
+  if(selected) {
+    Rounded(c,b,radii,ring);
+    Rounded(c,Inset(b,width),CornerRadii{std::max(0,radii.top-width),std::max(0,radii.bottom-width)},bg);
+  } else Rounded(c,b,radii,bg);
+}
 inline void Surface(Canvas& c,Rect b,int radius,Color bg,bool selected,Color ring,int width) {
   if(selected) {
     Rounded(c,b,radius,ring);
@@ -170,13 +203,13 @@ inline std::string Subtitle(const std::string& name) {
   return {};
 }
 inline void DrawCard(Canvas& c,const Metrics& m,int y,const std::string& name,
-                     bool selected,bool active,const Palette& p) {
+                     bool selected,bool active,const Palette& p,bool first=true,bool last=true) {
   Rect b=m.Card(y);
   Icon icon=IconFor(name);
   bool danger=icon==Icon::Trash;
   Color bg=danger?(active?p.on_error:p.error_surface):(active?p.outline:p.card);
   Color fg=danger?p.error:p.text;
-  Surface(c,b,m.Radius(),bg,selected,danger?p.error:p.primary,Dp(m.width,2));
+  Surface(c,b,ListCorners(m,first,last),bg,selected,danger?p.error:p.primary,Dp(m.width,2));
   int pad=Dp(m.width,16), size=Dp(m.width,40);
   Rect badge{b.x+pad,b.y+(b.h-size)/2,size,size};
   Rounded(c,badge,Dp(m.width,14),danger?p.error_surface:p.surface);

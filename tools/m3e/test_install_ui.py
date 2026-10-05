@@ -253,6 +253,9 @@ def run(cxx, out, ndk_clang=None):
                     draw.text((x, y), name.title(), font=ImageFont.load_default(size=17), fill='#272034')
                     sheet.paste(frame.resize((tile_w, tile_h), Image.Resampling.LANCZOS), (x, y + 25))
             sheet.save(out / ('install-flow-' + locale + '.png'))
+        for frame_path in sorted(build.glob('grouped-list-*.ppm')):
+            with Image.open(frame_path) as frame:
+                frame.save(out / (frame_path.stem + '.png'))
     print('Previews: ' + str(out))
 
 

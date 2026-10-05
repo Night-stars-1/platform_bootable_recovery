@@ -265,7 +265,8 @@ int TextMenu::DrawItems(int /*x*/, int y, int screen_width, bool long_press) con
   int height = draw_funcs_.MenuItemHeight(), spacing = draw_funcs_.MenuItemSpacing();
   for (size_t i = MenuStart(); i < MenuEnd(); ++i) {
     bool selected = static_cast<int>(i) == selection();
-    draw_funcs_.DrawMenuCard(y + offset, screen_width, TextItem(i), selected, selected && long_press);
+    draw_funcs_.DrawMenuCard(y + offset, screen_width, TextItem(i), selected, selected && long_press,
+                             i == 0, i + 1 == ItemsCount());
     offset += height + spacing;
   }
   if (MenuEnd() > MenuStart()) offset -= spacing;
@@ -284,7 +285,8 @@ int TextMenu::HitTest(int x, int y, int screen_width) const {
   recovery_m3e::Metrics m(screen_width);
   if (dashboard_) return recovery_m3e::HitDashboard(m, viewport_height_, x, y);
   return recovery_m3e::HitRow(m, 0, MenuEnd() - MenuStart(),
-                             selection_ - static_cast<int>(MenuStart()), x, y);
+                             selection_ - static_cast<int>(MenuStart()), x, y,
+                             static_cast<int>(MenuStart()), static_cast<int>(ItemsCount()));
 }
 
 GraphicMenu::GraphicMenu(const GRSurface* graphic_headers,
@@ -927,11 +929,11 @@ int ScreenRecoveryUI::DrawMenuPrompt(int /*x*/, int y, const std::vector<std::st
                                    recovery_m3e::Palette::ForMode(fastbootd_logo_enabled_)) - y;
 }
 void ScreenRecoveryUI::DrawMenuCard(int y, int width, const std::string& label,
-                                    bool selected, bool active) const {
+                                    bool selected, bool active, bool first, bool last) const {
   M3eCanvas canvas;
   recovery_m3e::Metrics m(width, MenuCharWidth(), MenuCharHeight());
   recovery_m3e::DrawCard(canvas, m, y, label, selected, active,
-                         recovery_m3e::Palette::ForMode(fastbootd_logo_enabled_));
+                         recovery_m3e::Palette::ForMode(fastbootd_logo_enabled_), first, last);
 }
 
 void ScreenRecoveryUI::DrawFill(int x, int y, int w, int h) const {
