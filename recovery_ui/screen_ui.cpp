@@ -18,6 +18,9 @@
 #include "recovery_ui/screen_ui.h"
 #include "recovery_ui/m3e.h"
 #include "recovery_ui/m3e_install.h"
+#include "recovery_ui/m3e_design.h"
+#include "recovery_ui/m3e_terminal.h"
+#include "recovery_ui/terminal_session.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -72,7 +75,8 @@ class M3eCanvas : public recovery_m3e::Canvas {
   void Text(int x, int y, const std::string& text, recovery_m3e::Font kind,
             recovery_m3e::Color color, bool bold) override {
     if (text.empty()) return;
-    auto bitmap = recovery_m3e::RasterText(text, recovery_m3e::FontPixels(kind, gr_fb_width()), bold);
+    auto bitmap = recovery_m3e::RasterText(text, recovery_m3e::FontPixels(kind, gr_fb_width()), bold,
+        recovery_m3e::Monospace(kind));
     int left = std::max(0, x), top = std::max(0, y);
     int width = std::min(gr_fb_width(), x + bitmap.width) - left;
     int height = std::min(gr_fb_height(), y + bitmap.height) - top;
@@ -88,6 +92,96 @@ class M3eCanvas : public recovery_m3e::Canvas {
   }
 };
 static void M3eSetColor(recovery_m3e::Color c) { gr_color(c.r, c.g, c.b, 255); }
+
+void ScreenRecoveryUI::DrawTerminalLocked() {
+  M3eCanvas canvas;
+  recovery_m3e::terminal::Draw(canvas,ScreenWidth(),ScreenHeight(),terminal_input_,terminal_output_,
+      terminal_symbols_,terminal_shift_,terminal_focus_);
+}
+
+void ScreenRecoveryUI::ShowTerminal() {
+  if (IsKeyInterrupted()) return;
+  recovery_ui::TerminalSession session;
+  int columns=std::max(20,ScreenWidth()/recovery_m3e::Dp(ScreenWidth(),7));
+  bool opened=session.Open(24,columns);
+  std::string start_error=opened?"":std::string("Unable to start terminal: ")+strerror(errno)+"\n";
+  recovery_m3e::terminal::Output output;
+  {
+    std::lock_guard<std::mutex> lock(updateMutex);
+    menu_.reset();transition_menu_.reset();menu_transition_=false;
+    terminal_visible_=true;terminal_shift_=terminal_symbols_=false;terminal_focus_=-1;
+    output.Append(start_error.data(),start_error.size());
+    terminal_input_.clear();terminal_output_=output.lines;FlushKeys();update_screen_locked();
+  }
+  std::atomic<bool> stopped{false};
+  std::thread reader;
+  if (opened) reader=std::thread([&] {
+    char bytes[2048];
+    while (!stopped) {
+      ssize_t count=session.Read(bytes,sizeof(bytes));
+      if (count==0) continue;
+      std::lock_guard<std::mutex> lock(updateMutex);
+      if (count<0) {
+        const std::string ended="\n[Shell exited. Tap Back to return.]\n";
+        output.Append(ended.data(),ended.size());
+      } else output.Append(bytes,count);
+      terminal_output_=output.lines;update_screen_locked();
+      if (count<0) break;
+    }
+  });
+  bool done=false;
+  while (!done) {
+    auto event=WaitInputEvent();
+    std::lock_guard<std::mutex> lock(updateMutex);
+    auto keys=recovery_m3e::terminal::Keyboard(ScreenWidth(),ScreenHeight(),terminal_symbols_,terminal_shift_);
+    auto send=[&](const std::string& value) {
+      if (!session.Send(value)) {
+        const std::string failed="\n[Input could not be sent to the shell.]\n";
+        output.Append(failed.data(),failed.size());terminal_output_=output.lines;
+      }
+    };
+    auto invoke=[&](int index) {
+      if (index==-1) {done=true;return;}
+      if (index<0 || index>=static_cast<int>(keys.size()))return;
+      const auto& key=keys[index];
+      if (!key.value.empty()) {
+        if (terminal_input_.size()<4096)terminal_input_+=key.value;
+      } else if (key.label=="ABC" && terminal_symbols_)terminal_symbols_=false;
+      else if (key.label=="123")terminal_symbols_=true;
+      else if (key.label=="ABC" || key.label=="abc" || key.label=="More" || key.label=="Less")terminal_shift_=!terminal_shift_;
+      else if (key.label=="Space") {if(terminal_input_.size()<4096)terminal_input_+=' ';}
+      else if (key.label=="Del") {if(!terminal_input_.empty())terminal_input_.pop_back();}
+      else if (key.label=="Enter") {send(terminal_input_+"\n");terminal_input_.clear();}
+      else if (key.label=="^C") {send(std::string(1,3));terminal_input_.clear();}
+      else if (key.label=="Clear") {output.Clear();terminal_output_=output.lines;}
+    };
+    if (event.type()==EventType::EXTRA) {
+      if (event.key()==static_cast<int>(KeyError::INTERRUPTED))done=true;
+      continue;
+    }
+    if (event.type()==EventType::TOUCH) {
+      auto point=TouchPoint(event.pos());auto back=recovery_m3e::design::Back(ScreenWidth());
+      if (recovery_m3e::InRounded(back,back.h/2,point.x(),point.y()))done=true;
+      else invoke(recovery_m3e::terminal::HitKey(keys,point.x(),point.y()));
+    } else if (event.type()==EventType::KEY) {
+      int key=event.key();
+      if (key==KEY_BACK || key==KEY_ESC)done=true;
+      else if (key==KEY_VOLUMEUP || key==KEY_UP)terminal_focus_=terminal_focus_<0?static_cast<int>(keys.size())-1:terminal_focus_-1;
+      else if (key==KEY_VOLUMEDOWN || key==KEY_DOWN)terminal_focus_=terminal_focus_+1>=static_cast<int>(keys.size())?-1:terminal_focus_+1;
+      else if (key==KEY_POWER)invoke(terminal_focus_);
+      else if (key==KEY_ENTER) {send(terminal_input_+"\n");terminal_input_.clear();}
+      else if (key==KEY_BACKSPACE) {if(!terminal_input_.empty())terminal_input_.pop_back();}
+      else if (key==KEY_SPACE && terminal_input_.size()<4096)terminal_input_+=' ';
+    }
+    update_screen_locked();
+  }
+  stopped=true;if(reader.joinable())reader.join();session.Close();
+  {
+    std::lock_guard<std::mutex> lock(updateMutex);
+    terminal_visible_=false;terminal_input_.clear();terminal_output_.clear();
+    menu_transition_=true;FlushKeys();
+  }
+}
 
 enum DirectRenderManager {
     DRM_INNER,
@@ -213,7 +307,7 @@ int TextMenu::Scroll(int updown) {
 
 bool TextMenu::DashboardCandidate() const {
   static const std::vector<std::string> main_items{
-    "Apply update", "Reboot options", "Settings", "Factory reset"};
+    "Apply update", "Terminal", "Settings", "Reboot options", "Factory reset"};
   return text_headers_.empty() && text_items_ == main_items;
 }
 std::string TextMenu::PageTitle() const {
@@ -248,9 +342,11 @@ void TextMenu::SetViewport(int width, int height) {
 void TextMenu::SetMenuHeight(int height) {
   viewport_height_ = std::max(0, height);
   dashboard_ = DashboardCandidate() && screen_width_ > 0 &&
-      recovery_m3e::Dashboard(recovery_m3e::Metrics(screen_width_), 0, viewport_height_).valid;
+      recovery_m3e::design::Home(screen_width_, 0, viewport_height_).valid;
   int row = draw_funcs_.MenuItemHeight(), gap = draw_funcs_.MenuItemSpacing();
-  size_t visible = dashboard_ ? 4 : recovery_m3e::VisibleCount(viewport_height_, row, gap);
+  auto page = recovery_m3e::design::MenuPage(DashboardCandidate(), PageTitle());
+  int reserved = page == recovery_m3e::design::Page::Reboot ? recovery_m3e::Dp(screen_width_,27) : 0;
+  size_t visible = dashboard_ ? 5 : recovery_m3e::VisibleCount(viewport_height_ - reserved, row, gap);
   if (!calibrated_height_ || visible != max_display_items_) {
     max_display_items_ = visible;
     if (max_display_items_ > 0)
@@ -263,10 +359,13 @@ int TextMenu::DrawItems(int /*x*/, int y, int screen_width, bool long_press) con
   if (dashboard_) return draw_funcs_.DrawDashboard(y, screen_width, viewport_height_, selection_, long_press);
   int offset = 0;
   int height = draw_funcs_.MenuItemHeight(), spacing = draw_funcs_.MenuItemSpacing();
+  auto page = recovery_m3e::design::MenuPage(DashboardCandidate(), PageTitle());
   for (size_t i = MenuStart(); i < MenuEnd(); ++i) {
     bool selected = static_cast<int>(i) == selection();
+    bool separate = page == recovery_m3e::design::Page::Reboot && i + 1 == ItemsCount();
+    if (i > MenuStart()) offset += recovery_m3e::design::ExtraGap(screen_width, page, separate);
     draw_funcs_.DrawMenuCard(y + offset, screen_width, TextItem(i), selected, selected && long_press,
-                             i == 0, i + 1 == ItemsCount());
+        i == 0 || separate, i + 1 == ItemsCount() || (page == recovery_m3e::design::Page::Reboot && i + 2 == ItemsCount()));
     offset += height + spacing;
   }
   if (MenuEnd() > MenuStart()) offset -= spacing;
@@ -283,7 +382,10 @@ int TextMenu::DrawItems(int /*x*/, int y, int screen_width, bool long_press) con
 int TextMenu::HitTest(int x, int y, int screen_width) const {
   if (y < 0 || y >= viewport_height_) return -1;
   recovery_m3e::Metrics m(screen_width);
-  if (dashboard_) return recovery_m3e::HitDashboard(m, viewport_height_, x, y);
+  if (dashboard_) return recovery_m3e::design::HitHome(screen_width, viewport_height_, x, y);
+  auto page = recovery_m3e::design::MenuPage(DashboardCandidate(), PageTitle());
+  if (page != recovery_m3e::design::Page::None)
+    return recovery_m3e::design::HitList(screen_width,page,MenuEnd()-MenuStart(),MenuStart(),ItemsCount(),x,y);
   return recovery_m3e::HitRow(m, 0, MenuEnd() - MenuStart(),
                              selection_ - static_cast<int>(MenuStart()), x, y,
                              static_cast<int>(MenuStart()), static_cast<int>(ItemsCount()));
@@ -920,8 +1022,7 @@ void ScreenRecoveryUI::DrawScrollBar(int y, int height) const {
 }
 int ScreenRecoveryUI::DrawDashboard(int y, int width, int available, int selected, bool active) const {
   M3eCanvas canvas;
-  return recovery_m3e::DrawDashboard(canvas, recovery_m3e::Metrics(width), y, available, selected,
-                                     active, recovery_m3e::Palette::ForMode(fastbootd_logo_enabled_));
+  return recovery_m3e::design::Dashboard(canvas,width,y,available,selected,active);
 }
 int ScreenRecoveryUI::DrawMenuPrompt(int /*x*/, int y, const std::vector<std::string>& lines) const {
   M3eCanvas canvas;
@@ -931,6 +1032,10 @@ int ScreenRecoveryUI::DrawMenuPrompt(int /*x*/, int y, const std::vector<std::st
 void ScreenRecoveryUI::DrawMenuCard(int y, int width, const std::string& label,
                                     bool selected, bool active, bool first, bool last) const {
   M3eCanvas canvas;
+  if (IsDesignMenuLocked()) {
+    recovery_m3e::design::Card(canvas,width,y,label,selected,active,first,last);
+    return;
+  }
   recovery_m3e::Metrics m(width, MenuCharWidth(), MenuCharHeight());
   recovery_m3e::DrawCard(canvas, m, y, label, selected, active,
                          recovery_m3e::Palette::ForMode(fastbootd_logo_enabled_), first, last);
@@ -1007,7 +1112,15 @@ std::vector<std::string> ScreenRecoveryUI::GetMenuHelpMessage() const {
 
 // Redraws everything on the screen. Does not flip pages. Should only be called with updateMutex
 // locked.
+bool ScreenRecoveryUI::IsDesignMenuLocked() const {
+  return menu_ && !fastbootd_logo_enabled_ && !pattern_input_ &&
+      recovery_m3e::design::MenuPage(menu_->DashboardCandidate(),menu_->PageTitle()) != recovery_m3e::design::Page::None;
+}
+bool ScreenRecoveryUI::IsDesignAdbLocked() const {
+  return IsInstallPageLocked() && recovery_m3e::design::AdbPage(m3e_adb_sideload_,m3e_install_stage_);
+}
 void ScreenRecoveryUI::draw_screen_locked() {
+  if (terminal_visible_) { DrawTerminalLocked(); return; }
   if (pattern_input_) {
     M3eSetColor(recovery_m3e::Palette::ForMode(false).background);
     gr_clear();
@@ -1016,7 +1129,7 @@ void ScreenRecoveryUI::draw_screen_locked() {
     return;
   }
   if (IsInstallPageLocked()) {
-    gr_color(0, 0, 0, 255);
+    M3eSetColor(IsDesignAdbLocked() ? recovery_m3e::design::background : recovery_m3e::Color{0,0,0});
     gr_clear();
     DrawInstallPageLocked();
     draw_battery_capacity_locked();
@@ -1028,7 +1141,8 @@ void ScreenRecoveryUI::draw_screen_locked() {
     return;
   }
 
-  M3eSetColor(recovery_m3e::Palette::ForMode(fastbootd_logo_enabled_).background);
+  M3eSetColor(IsDesignMenuLocked() ? recovery_m3e::design::background :
+      recovery_m3e::Palette::ForMode(fastbootd_logo_enabled_).background);
   gr_clear();
 
   draw_menu_and_text_buffer_locked(GetMenuHelpMessage());
@@ -1039,6 +1153,17 @@ void ScreenRecoveryUI::draw_screen_locked() {
 void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(const std::vector<std::string>& /*help_message*/) {
   if (menu_) {
     M3eCanvas canvas;
+    if (IsDesignMenuLocked()) {
+      using namespace recovery_m3e;
+      auto page=design::MenuPage(menu_->DashboardCandidate(),menu_->PageTitle());
+      design::Header(canvas,ScreenWidth(),ScreenHeight(),page,menu_->selection()==-1);
+      menu_start_y_=design::MenuTop(ScreenWidth(),ScreenHeight(),page);
+      m3e_menu_bottom_=design::FooterTop(ScreenWidth(),ScreenHeight())-Dp(ScreenWidth(),10);
+      menu_->SetViewport(ScreenWidth(),std::max(0,m3e_menu_bottom_-menu_start_y_));
+      menu_->DrawItems(Dp(ScreenWidth(),18),menu_start_y_,ScreenWidth(),IsLongPress());
+      design::Footer(canvas,ScreenWidth(),ScreenHeight(),title_lines_);
+      return;
+    }
     recovery_m3e::Metrics m(ScreenWidth());
     auto palette = recovery_m3e::Palette::ForMode(fastbootd_logo_enabled_);
     int top = std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
@@ -1105,6 +1230,10 @@ void ScreenRecoveryUI::DrawStatusPageLocked() {
 void ScreenRecoveryUI::draw_battery_capacity_locked() {
   if (is_battery_less || (!menu_ && !IsInstallPageLocked() && !pattern_input_)) return;
   M3eCanvas canvas;
+  if (IsDesignMenuLocked() || IsDesignAdbLocked()) {
+    recovery_m3e::design::Battery(canvas,ScreenWidth(),batt_capacity_,charging_);
+    return;
+  }
   recovery_m3e::Metrics m(ScreenWidth());
   int top = std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
   recovery_m3e::DrawBattery(canvas, m, top, batt_capacity_, charging_,
@@ -1114,7 +1243,7 @@ void ScreenRecoveryUI::draw_battery_capacity_locked() {
 // Redraw everything on the screen and flip the screen (make it visible).
 // Should only be called with updateMutex locked.
 bool ScreenRecoveryUI::ShouldHoldMenuFrameLocked() const {
-  return menu_transition_ && !menu_ && show_text &&
+  return menu_transition_ && !menu_ && show_text && !terminal_visible_ &&
       m3e_install_stage_ == InstallStage::NONE && !pattern_input_ &&
       !(file_viewer_text_ && text_ == file_viewer_text_);
 }
@@ -1502,6 +1631,8 @@ void ScreenRecoveryUI::SetInstallStage(InstallStage stage) {
   if (stage == InstallStage::WAITING || m3e_install_stage_ == InstallStage::NONE) {
     m3e_install_logs_.clear();
   }
+  if (stage == InstallStage::WAITING) m3e_adb_sideload_ = true;
+  else if (stage != InstallStage::VERIFYING && stage != InstallStage::INSTALLING) m3e_adb_sideload_ = false;
   m3e_install_stage_ = stage;
   if (stage != InstallStage::NONE) menu_transition_ = false;
   update_screen_locked();
@@ -1513,11 +1644,24 @@ bool ScreenRecoveryUI::IsInstallPageLocked() const {
   // Confirmation menus always take priority over the installation dashboard.
   const auto title = menu_->PageTitle();
   return title == "Install result" || title == "Flash result" ||
-      (m3e_install_stage_ == InstallStage::WAITING && title == "ADB Sideload");
+      (recovery_m3e::design::AdbPage(m3e_adb_sideload_,m3e_install_stage_) && title == "ADB Sideload");
 }
 
 void ScreenRecoveryUI::DrawInstallPageLocked() {
   M3eCanvas canvas;
+  if (IsDesignAdbLocked()) {
+    recovery_m3e::design::Adb(canvas,ScreenWidth(),ScreenHeight(),m3e_install_stage_ == InstallStage::WAITING,
+        progressScopeStart + progress * progressScopeSize,
+        progressBarType == DETERMINATE && progressScopeSize > 0,m3e_install_logs_,title_lines_,
+        menu_ && menu_->selection() == -1);
+    if (menu_) {
+      // The SVG uses the back control to cancel, rather than a separate Cancel card.
+      menu_start_y_ = m3e_menu_bottom_ = ScreenHeight();
+      menu_->SetViewport(ScreenWidth(),0);
+      menu_->Select(-1);
+    }
+    return;
+  }
   recovery_m3e::Metrics m(ScreenWidth());
   auto palette = recovery_m3e::Palette::ForMode(false);
   palette.background = {0, 0, 0};
@@ -1601,8 +1745,9 @@ void ScreenRecoveryUI::PrintV(const char* fmt, bool copy_to_stdout, va_list ap) 
     for (const auto& line : android::base::Split(str, "\n")) {
       if (!line.empty()) m3e_install_logs_.push_back(line);
     }
-    if (m3e_install_logs_.size() > 3) {
-      m3e_install_logs_.erase(m3e_install_logs_.begin(), m3e_install_logs_.end() - 3);
+    size_t retained = m3e_adb_sideload_ ? 128 : 3;
+    if (m3e_install_logs_.size() > retained) {
+      m3e_install_logs_.erase(m3e_install_logs_.begin(), m3e_install_logs_.end() - retained);
     }
   }
   if (text_rows_ > 0 && text_cols_ > 0) {
@@ -1788,6 +1933,7 @@ std::unique_ptr<Menu> ScreenRecoveryUI::CreateMenu(const std::vector<std::string
 int ScreenRecoveryUI::SelectMenu(int sel) {
   std::lock_guard<std::mutex> lg(updateMutex);
   if (menu_) {
+    if (IsDesignAdbLocked()) sel = -1;  // Back is the only control on the SVG sideload page.
     int old_sel = menu_->selection();
     sel = menu_->Select(sel);
 
@@ -1839,7 +1985,8 @@ int ScreenRecoveryUI::SelectMenu(const Point& p) {
 
     recovery_m3e::Metrics m(ScreenWidth(), MenuCharWidth(), MenuCharHeight());
     int top = std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
-    auto back = recovery_m3e::BackBounds(m, top);
+    auto back = IsDesignMenuLocked() || IsDesignAdbLocked() ?
+        recovery_m3e::design::Back(ScreenWidth()) : recovery_m3e::BackBounds(m, top);
     if (!menu_->IsMain() && recovery_m3e::InRounded(back, back.h / 2, point.x(), point.y())) {
       return Device::kGoBack;
     }

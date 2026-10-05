@@ -332,6 +332,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   void SetBackground(Icon icon) override;
   void SetSystemUpdateText(bool security_update) override;
   void SetInstallStage(InstallStage stage) override;
+  void ShowTerminal() override;
 
   // progress indicator
   void SetProgressType(ProgressType type) override;
@@ -383,11 +384,11 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   int M3eScaleWidth() const;
 
   int MenuItemHeight() const override {
-    return std::max(1, (M3eScaleWidth() * 76 + 180) / 360);
+    return std::max(1, (M3eScaleWidth() * (IsDesignMenuLocked() ? 63 : 76) + 180) / 360);
   }
 
   int MenuItemSpacing() const override {
-    return std::max(1, (M3eScaleWidth() * 8 + 180) / 360);
+    return std::max(1, (M3eScaleWidth() * (IsDesignMenuLocked() ? 5 : 8) + 180) / 360);
   }
 
  protected:
@@ -502,6 +503,16 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   int m3e_menu_bottom_ = 0;
   InstallStage m3e_install_stage_ = InstallStage::NONE;
   std::vector<std::string> m3e_install_logs_;
+  bool m3e_adb_sideload_ = false;
+  bool IsDesignMenuLocked() const;
+  bool IsDesignAdbLocked() const;
+  bool terminal_visible_ = false;
+  bool terminal_shift_ = false;
+  bool terminal_symbols_ = false;
+  int terminal_focus_ = -1;
+  std::string terminal_input_;
+  std::vector<std::string> terminal_output_;
+  void DrawTerminalLocked();
   // Retain the visible frame until the next menu/action is ready. Both fields
   // are protected by updateMutex, like menu_.
   bool menu_transition_ = false;

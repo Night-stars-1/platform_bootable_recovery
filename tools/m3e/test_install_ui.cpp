@@ -4,6 +4,8 @@
  */
 // Host rendering and geometry checks using the same primitives as ScreenRecoveryUI.
 #include "recovery_ui/m3e_install.h"
+#include "recovery_ui/m3e_design.h"
+#include "recovery_ui/m3e_terminal.h"
 #include <cassert>
 #include <fstream>
 #include <iostream>
@@ -28,11 +30,11 @@ struct PixelCanvas : Canvas {
   }
   void Text(int x,int y,const std::string& s,Font f,Color c,bool bold) override {
     if(s.empty()) return;
-    Rect b{x,y,TextWidth(s,FontPixels(f,width),bold),LineHeight(FontPixels(f,width))};
+    Rect b{x,y,TextWidth(s,FontPixels(f,width),bold,Monospace(f)),LineHeight(FontPixels(f,width))};
     assert(x>=0 && y>=0 && x+b.w<=width && y+b.h<=height);
     runs.push_back({b,s,c});
     if(!pixels) return;
-    auto raster=RasterText(s,FontPixels(f,width),bold);
+    auto raster=RasterText(s,FontPixels(f,width),bold,Monospace(f));
     for(int sy=0;sy<raster.height;++sy)for(int sx=0;sx<raster.width;++sx) {
       int dx=x+sx,dy=y+sy;if(dx<0||dy<0||dx>=width||dy>=height) continue;
       int a=raster.alpha[sy*raster.width+sx];size_t i=(dy*width+dx)*3;
@@ -178,6 +180,42 @@ void RenderList(const std::string& out,int w,int h,bool zh,int count,int first_i
   }
   if(pixels)c.Write(out+"/grouped-list-"+std::to_string(count)+(zh?"-zh.ppm":"-en.ppm"));
 }
+void RenderDesign(const std::string& out,int w,int h,bool zh,int page,bool pixels=false) {
+  SetScaleBasis(w,h);SetLanguage(zh?Language::Chinese:Language::English);
+  PixelCanvas c(w,h,pixels);c.Fill({0,0,w,h},design::background);
+  const std::vector<std::string> details{"Product name - astonc","Version 17.0.130 (2026-10-05)"};
+  if(page>=3 && page<=4)design::Adb(c,w,h,page==3,0.04,true,
+      page==3?std::vector<std::string>{}:std::vector<std::string>{"Finding package...","Verifying package...","Installing updates","Step 1/2"},details);
+  else if(page==5)terminal::Draw(c,w,h,"ls /system/bin",{"# pwd","/","# ls /system/bin"},false,false,-1);
+  else {
+    auto kind=page==0?design::Page::Home:page==1?design::Page::Reboot:design::Page::Sources;
+    design::Header(c,w,h,kind);int top=design::MenuTop(w,h,kind),available=design::FooterTop(w,h)-Dp(w,10)-top;
+    if(page==0 && design::Home(w,top,available).valid) {
+      design::Dashboard(c,w,top,available,-1,false);
+      for(int i=0;i<5;++i) {
+        auto b=design::Home(w,0,available).buttons[i];assert(design::HitHome(w,available,b.x+b.w/2,b.y+b.h/2)==i);
+      }
+    } else {
+      auto m=design::LayoutMetrics(w);
+      std::vector<std::string> items=page==1?std::vector<std::string>{"Reboot system now","Enter fastboot","Reboot to bootloader","Reboot to recovery","Power off"}:
+          page==2?std::vector<std::string>{"Apply from ADB","Choose ZIP from internal storage","Flash partition image","Choose from USB"}:
+          std::vector<std::string>{"Apply update","Terminal","Settings","Reboot options","Factory reset"};
+      int count=std::min(static_cast<int>(items.size()),VisibleCount(available-(page==1?Dp(w,27):0),m.row_height,m.gap));
+      int y=top;
+      for(int i=0;i<count;++i) {
+        bool last=i+1==static_cast<int>(items.size()),separate=page==1 && last;
+        if(i>0)y+=design::ExtraGap(w,kind,separate);
+        design::Card(c,w,y,items[i],false,false,i==0 || separate,last || (page==1 && i+2==static_cast<int>(items.size())));
+        assert(design::HitList(w,kind,count,0,items.size(),w/2,y-top+m.row_height/2)==i);
+        if(i>0)assert(design::HitList(w,kind,count,0,items.size(),w/2,y-top-1)==-1);
+        y+=m.Pitch();
+      }
+    }
+    design::Footer(c,w,h,details);
+  }
+  if(page!=5)design::Battery(c,w,82,false);
+  if(pixels)c.Write(out+"/design-"+std::to_string(page)+(zh?"-zh.ppm":"-en.ppm"));
+}
 int main(int argc,char** argv) {
   assert(argc==2);std::string out=argv[1];
   CheckProgress();
@@ -189,8 +227,10 @@ int main(int argc,char** argv) {
     for(bool zh:{false,true}) {
       for(int i=0;i<6;++i)Render(out,w,h,zh,i);
       for(int count:{1,2,4})for(int first=0;first<count;++first)RenderList(out,w,h,zh,count,first);
+      for(int page=0;page<6;++page)RenderDesign(out,w,h,zh,page);
     }
   for(bool zh:{false,true})for(int i=0;i<6;++i)Render(out,1220,2712,zh,i,true);
   for(bool zh:{false,true})for(int count:{1,2,4})RenderList(out,1220,2712,zh,count,0,true);
+  for(bool zh:{false,true})for(int page=0;page<6;++page)RenderDesign(out,1220,2712,zh,page,true);
   std::cout<<"PASS: six stages, two languages, seven screen sizes, grouped lists with selection, scrolling and matching touch geometry\n";
 }

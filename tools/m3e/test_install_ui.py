@@ -30,6 +30,8 @@ def routing_test():
     definitions = '\n'.join(function(screen, signature) for signature in (
         'void ScreenRecoveryUI::SetInstallStage(',
         'bool ScreenRecoveryUI::IsInstallPageLocked() const',
+        'bool ScreenRecoveryUI::IsDesignMenuLocked() const',
+        'bool ScreenRecoveryUI::IsDesignAdbLocked() const',
         'bool ScreenRecoveryUI::ShouldHoldMenuFrameLocked() const',
         'void ScreenRecoveryUI::update_screen_locked()',
         'void ScreenRecoveryUI::update_progress_locked()'))
@@ -41,7 +43,8 @@ def routing_test():
 #include <functional>
 #include <memory>
 #include <mutex>
-struct TestMenu { std::string title; std::string PageTitle() const {return title;} };
+#include "recovery_ui/m3e_design.h"
+struct TestMenu { std::string title; std::string PageTitle() const {return title;} bool DashboardCandidate() const {return false;} };
 int frame_flips=0;void gr_flip(){++frame_flips;}
 struct ScreenRecoveryUI {
   using InstallStage = recovery_ui::InstallStage;
@@ -49,6 +52,9 @@ struct ScreenRecoveryUI {
   InstallStage m3e_install_stage_=InstallStage::NONE;
   std::vector<std::string> m3e_install_logs_;int redraws=0;
   bool menu_transition_=false,show_text=true,pagesIdentical=false;
+  bool m3e_adb_sideload_=false,terminal_visible_=false;
+  bool fastbootd_logo_enabled_=false;
+  bool IsDesignMenuLocked() const;bool IsDesignAdbLocked() const;
   void* pattern_input_=nullptr;char** text_=nullptr;char** file_viewer_text_=nullptr;
   void draw_screen_locked(){++redraws;}void draw_foreground_locked(){++redraws;}
   void update_screen_locked();void update_progress_locked();
@@ -143,6 +149,20 @@ void CheckNavigation() {
 }
 void CheckRouting() {
   CheckNavigation();
+  ScreenRecoveryUI design;
+  for(const auto& title:{"Settings","Language","Advanced tools","Install result","Flash result","Flash partition image","Confirm or select"}) {
+    design.menu_=std::make_unique<TestMenu>(TestMenu{title});assert(!design.IsDesignMenuLocked());
+  }
+  for(const auto& title:{"Reboot options","Install update"}) {
+    design.menu_=std::make_unique<TestMenu>(TestMenu{title});assert(design.IsDesignMenuLocked());
+    design.fastbootd_logo_enabled_=true;assert(!design.IsDesignMenuLocked());design.fastbootd_logo_enabled_=false;
+  }
+  design.menu_.reset();design.SetInstallStage(InstallStage::INSTALLING);assert(!design.IsDesignAdbLocked());
+  design.SetInstallStage(InstallStage::WAITING);assert(design.IsDesignAdbLocked());
+  design.SetInstallStage(InstallStage::VERIFYING);assert(!design.IsDesignAdbLocked());
+  design.SetInstallStage(InstallStage::INSTALLING);assert(design.IsDesignAdbLocked());
+  design.menu_=std::make_unique<TestMenu>(TestMenu{"Confirm or select"});assert(!design.IsDesignAdbLocked());
+  design.menu_.reset();design.SetInstallStage(InstallStage::SUCCESS);assert(!design.IsDesignAdbLocked());
   ScreenRecoveryUI transition;transition.menu_transition_=true;
   auto flips=frame_flips;
   transition.update_screen_locked();transition.update_progress_locked();
@@ -196,16 +216,36 @@ def compile_android(clang, build):
     source = (ROOT / 'recovery_ui/screen_ui.cpp').read_text(encoding='utf-8')
     unit = '''#include "recovery_ui/screen_ui.h"
 #include "recovery_ui/m3e_install.h"
+#include "recovery_ui/m3e_design.h"
+#include "recovery_ui/m3e_terminal.h"
+#include "recovery_ui/terminal_session.h"
+#include <cstring>
 unsigned int gr_get_width(const GRSurface*);
 unsigned int gr_get_height(const GRSurface*);
+void gr_clear();
 class M3eCanvas : public recovery_m3e::Canvas {
  public:
   void Fill(recovery_m3e::Rect,recovery_m3e::Color) override {}
   void Text(int,int,const std::string&,recovery_m3e::Font,recovery_m3e::Color,bool) override {}
 };
+static void M3eSetColor(recovery_m3e::Color) {}
 '''
     for signature in ('void ScreenRecoveryUI::SetInstallStage(',
+                      'bool ScreenRecoveryUI::IsDesignMenuLocked() const',
+                      'int ScreenRecoveryUI::DrawDashboard(',
+                      'void ScreenRecoveryUI::DrawMenuCard(',
+                      'void ScreenRecoveryUI::draw_screen_locked()',
+                      'void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(',
+                      'void ScreenRecoveryUI::draw_battery_capacity_locked()',
+                      'bool TextMenu::DashboardCandidate() const',
+                      'void TextMenu::SetMenuHeight(',
+                      'int TextMenu::DrawItems(',
+                      'int TextMenu::HitTest(',
+                      'int ScreenRecoveryUI::SelectMenu(int sel)',
                       'bool ScreenRecoveryUI::IsInstallPageLocked() const',
+                      'bool ScreenRecoveryUI::IsDesignAdbLocked() const',
+                      'void ScreenRecoveryUI::DrawTerminalLocked()',
+                      'void ScreenRecoveryUI::ShowTerminal()',
                       'void ScreenRecoveryUI::DrawInstallPageLocked()'):
         unit += '\n' + function(source, signature) + '\n'
     path = build / 'android-install-ui.cpp'
@@ -253,7 +293,7 @@ def run(cxx, out, ndk_clang=None):
                     draw.text((x, y), name.title(), font=ImageFont.load_default(size=17), fill='#272034')
                     sheet.paste(frame.resize((tile_w, tile_h), Image.Resampling.LANCZOS), (x, y + 25))
             sheet.save(out / ('install-flow-' + locale + '.png'))
-        for frame_path in sorted(build.glob('grouped-list-*.ppm')):
+        for frame_path in sorted(list(build.glob('grouped-list-*.ppm')) + list(build.glob('design-*.ppm'))):
             with Image.open(frame_path) as frame:
                 frame.save(out / (frame_path.stem + '.png'))
     print('Previews: ' + str(out))

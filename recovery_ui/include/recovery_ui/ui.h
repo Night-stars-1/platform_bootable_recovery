@@ -87,6 +87,7 @@ class RecoveryUI {
   using InstallStage = recovery_ui::InstallStage;
   // Optional presentation API; custom/stub UIs keep their existing behavior.
   virtual void SetInstallStage(InstallStage) {}
+  virtual void ShowTerminal() { Print("Terminal is unavailable on this UI.\n"); }
   enum Icon {
     NONE,
     INSTALLING_UPDATE,

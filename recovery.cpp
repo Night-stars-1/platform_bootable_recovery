@@ -695,6 +695,10 @@ change_menu:
         break;
       }
 
+      case Device::OPEN_TERMINAL:
+        ui->ShowTerminal();
+        break;
+
       case Device::VIEW_RECOVERY_LOGS:
         choose_recovery_file(device);
         break;

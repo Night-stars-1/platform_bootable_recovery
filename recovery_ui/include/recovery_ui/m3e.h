@@ -183,7 +183,7 @@ inline void Surface(Canvas& c,Rect b,int radius,Color bg,bool selected,Color rin
 }
 inline void Label(Canvas& c,const Metrics& m,int x,int y,int width,const std::string& text,
                   Font f,Color color,bool bold=false) {
-  c.Text(x,y,FitText(Tr(text),width,FontPixels(f,m.width),bold),f,color,bold);
+  c.Text(x,y,FitText(Tr(text),width,FontPixels(f,m.width),bold,Monospace(f)),f,color,bold);
 }
 inline std::string Subtitle(const std::string& name) {
   if(name=="Language") return "Choose your recovery language";

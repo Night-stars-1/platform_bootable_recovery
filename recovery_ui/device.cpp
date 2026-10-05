@@ -34,8 +34,9 @@ using menu_action_t = std::pair<std::string, int>;
 static std::vector<std::string> g_main_header{};
 static std::vector<menu_action_t> g_main_actions{
   { "Apply update", Device::APPLY_UPDATE },
-  { "Reboot options", static_cast<int>(MenuRoute::Reboot) },
+  { "Terminal", Device::OPEN_TERMINAL },
   { "Settings", Device::MENU_ADVANCED },
+  { "Reboot options", static_cast<int>(MenuRoute::Reboot) },
   { "Factory reset", Device::MENU_WIPE },
 };
 static std::vector<std::string> g_settings_header{ "Settings" };
@@ -47,9 +48,9 @@ static std::vector<menu_action_t> g_settings_actions{
 static std::vector<std::string> g_reboot_header{ "Reboot options" };
 static std::vector<menu_action_t> g_reboot_actions{
   { "Reboot system now", Device::REBOOT },
+  { "Enter fastboot", Device::ENTER_FASTBOOT },
   { "Reboot to bootloader", Device::REBOOT_BOOTLOADER },
   { "Reboot to recovery", Device::REBOOT_RECOVERY },
-  { "Enter fastboot", Device::ENTER_FASTBOOT },
   { "Power off", Device::SHUTDOWN },
 };
 static std::vector<std::string> g_maintenance_header{ "Advanced tools" };

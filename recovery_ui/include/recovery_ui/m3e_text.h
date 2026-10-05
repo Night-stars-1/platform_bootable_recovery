@@ -12,7 +12,8 @@
 #include <string>
 #include <vector>
 namespace recovery_m3e {
-enum class Font { Body, Menu, Title, Small, Heading };
+enum class Font { Body, Menu, Title, Small, Heading, DesignTitle, DesignBrand, Code, Caption, Command, Instruction, Source };
+inline bool Monospace(Font font) {return font==Font::Code || font==Font::Caption || font==Font::Command;}
 // Scale basis: the shorter screen side, set once the framebuffer size is known.
 // Layout widths stay full-screen; only dp scaling is capped, so portrait screens
 // (basis == width) are unchanged while landscape and tablet screens scale by
@@ -29,6 +30,13 @@ inline int Dp(int width, float dp) {
 }
 inline int FontPixels(Font font, int width) {
   switch(font) {
+    case Font::DesignTitle: return Dp(width,22);
+    case Font::DesignBrand: return Dp(width,28);
+    case Font::Code: return Dp(width,11);
+    case Font::Caption: return Dp(width,9);
+    case Font::Command: return Dp(width,14);
+    case Font::Instruction: return Dp(width,11);
+    case Font::Source: return Dp(width,16);
     case Font::Small: return Dp(width,12);
     case Font::Body: return Dp(width,14);
     case Font::Menu: return Dp(width,18);
@@ -64,34 +72,37 @@ inline const fontdata::Glyph& GlyphAt(int index,bool bold) {
 }
 inline const fontdata::Glyph& GlyphFor(uint32_t ch,bool bold) {return GlyphAt(GlyphIndex(ch),bold);}
 inline int TextAscent() {return std::max(fontdata::kAscent,fontdata::kCjkAscent);}
-inline int TextWidth(const std::string& text,int pixels,bool bold=false) {
+inline int TextWidth(const std::string& text,int pixels,bool bold=false,bool mono=false) {
   double advance=0;size_t pos=0;
-  while(pos<text.size()) advance+=GlyphFor(NextCodepoint(text,pos),bold).advance;
+  while(pos<text.size()) {
+    auto ch=NextCodepoint(text,pos);
+    advance+=mono?(ch<128?0.65:1.0)*64.0*fontdata::kSize:GlyphFor(ch,bold).advance;
+  }
   return static_cast<int>(std::ceil(advance*pixels/(64.0*fontdata::kSize)));
 }
 inline int LineHeight(int pixels) {
   int height=TextAscent()+std::max(fontdata::kDescent,fontdata::kCjkDescent);
   return static_cast<int>(std::ceil(pixels*double(height)/fontdata::kSize));
 }
-inline std::string FitText(std::string text,int width,int pixels,bool bold=false) {
-  if(TextWidth(text,pixels,bold)<=width) return text;
-  if(TextWidth("...",pixels,bold)>width) return {};
+inline std::string FitText(std::string text,int width,int pixels,bool bold=false,bool mono=false) {
+  if(TextWidth(text,pixels,bold,mono)<=width) return text;
+  if(TextWidth("...",pixels,bold,mono)>width) return {};
   std::vector<size_t> boundaries{0};size_t pos=0;
   while(pos<text.size()) {NextCodepoint(text,pos);boundaries.push_back(pos);}
   while(boundaries.size()>1) {
     boundaries.pop_back();
     std::string candidate=text.substr(0,boundaries.back())+"...";
-    if(TextWidth(candidate,pixels,bold)<=width) return candidate;
+    if(TextWidth(candidate,pixels,bold,mono)<=width) return candidate;
   }
   return "...";
 }
-inline std::vector<std::string> WrapText(const std::string& text,int width,int pixels,bool bold=false) {
+inline std::vector<std::string> WrapText(const std::string& text,int width,int pixels,bool bold=false,bool mono=false) {
   std::vector<std::string> lines;size_t pos=0;
   while(pos<text.size()) {
     size_t end=pos,last_space=std::string::npos;
     while(end<text.size() && text[end]!='\n') {
       size_t next=end;NextCodepoint(text,next);
-      if(TextWidth(text.substr(pos,next-pos),pixels,bold)>width) break;
+      if(TextWidth(text.substr(pos,next-pos),pixels,bold,mono)>width) break;
       if(text[end]==' ') last_space=end;
       end=next;
     }
@@ -119,8 +130,8 @@ inline const std::vector<uint8_t>& GlyphMask(uint32_t ch,bool bold) {
   return masks[(bold?95+fontdata::kCjkCount:0)+GlyphIndex(ch)];
 }
 struct TextBitmap { int width,height; std::vector<uint8_t> alpha; };
-inline TextBitmap RasterText(const std::string& text,int pixels,bool bold) {
-  TextBitmap result{std::max(1,TextWidth(text,pixels,bold)+2),LineHeight(pixels),{}};
+inline TextBitmap RasterText(const std::string& text,int pixels,bool bold,bool mono=false) {
+  TextBitmap result{std::max(1,TextWidth(text,pixels,bold,mono)+2),LineHeight(pixels),{}};
   result.alpha.resize(result.width*result.height);
   const double scale=double(pixels)/fontdata::kSize;
   double cursor=0;
@@ -129,16 +140,18 @@ inline TextBitmap RasterText(const std::string& text,int pixels,bool bold) {
     uint32_t ch=NextCodepoint(text,pos);
     const auto& g=GlyphFor(ch,bold);
     const auto& mask=GlyphMask(ch,bold);
-    const int left=std::lround(cursor+g.left*scale);
+    double advance=mono?(ch<128?0.65:1.0)*pixels:g.advance*scale/64;
+    double scale_x=mono?std::min(scale,std::max(1.0,advance-1)/std::max(1,static_cast<int>(g.w))):scale;
+    const int left=std::lround(cursor+(mono?(advance-g.w*scale_x)/2:g.left*scale));
     const int top=std::lround((TextAscent()+g.top)*scale);
-    int w=std::ceil(g.w*scale), h=std::ceil(g.h*scale);
+    int w=std::ceil(g.w*scale_x), h=std::ceil(g.h*scale);
     auto sample=[&](int x,int y)->double {
       return x<0 || y<0 || x>=g.w || y>=g.h ? 0 : mask[y*g.w+x];
     };
     for(int y=0;y<h;++y) for(int x=0;x<w;++x) {
       int dx=left+x,dy=top+y;
       if(dx<0 || dy<0 || dx>=result.width || dy>=result.height) continue;
-      double sx=(x+0.5)/scale-0.5, sy=(y+0.5)/scale-0.5;
+      double sx=(x+0.5)/scale_x-0.5, sy=(y+0.5)/scale-0.5;
       int ix=std::floor(sx), iy=std::floor(sy);
       double ax=sx-ix,ay=sy-iy;
       double value=(sample(ix,iy)*(1-ax)+sample(ix+1,iy)*ax)*(1-ay)
@@ -146,7 +159,7 @@ inline TextBitmap RasterText(const std::string& text,int pixels,bool bold) {
       auto& dest=result.alpha[dy*result.width+dx];
       dest=std::max(dest,static_cast<uint8_t>(std::clamp(std::lround(value),0L,255L)));
     }
-    cursor+=g.advance*scale/64;
+    cursor+=advance;
   }
   return result;
 }
