@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: The uwuAOSP Project
 # SPDX-License-Identifier: Apache-2.0
-"""Generate minui-compatible status logos from the pinned user-selected artwork."""
+"""Generate minui-compatible M3E logos from the pinned user-selected artwork."""
 
 import argparse
 import hashlib
@@ -19,7 +19,7 @@ def generate(out: Path) -> None:
     spec = json.loads((ASSETS / "uwu-Rec-SOURCE.json").read_text(encoding="utf-8"))
     source = ASSETS / "uwu-Rec.png"
     if hashlib.sha256(source.read_bytes()).hexdigest() != spec["sha256"]:
-        raise ValueError("Status logo source SHA-256 mismatch")
+        raise ValueError("M3E logo source SHA-256 mismatch")
     with Image.open(source) as image:
         rgba = image.convert("RGBA")
     if list(rgba.size) != spec["original_size"]:
@@ -35,7 +35,7 @@ def generate(out: Path) -> None:
         # minui display surfaces accept RGB, not RGBA; gr_blit does not alpha blend.
         background = Image.new("RGBA", resized.size, tuple(spec["background"]) + (255,))
         rgb = Image.alpha_composite(background, resized).convert("RGB")
-        target = out / f"res-{density}" / "images" / "uwu_recovery_status.png"
+        target = out / f"res-{density}" / "images" / "uwu_recovery_m3e.png"
         target.parent.mkdir(parents=True, exist_ok=True)
         rgb.save(target, optimize=True)
         print(f"{target}: {width}x{height} RGB")

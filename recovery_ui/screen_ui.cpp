@@ -506,9 +506,6 @@ ScreenRecoveryUI::~ScreenRecoveryUI() {
 }
 
 const GRSurface* ScreenRecoveryUI::GetCurrentFrame() const {
-  if (status_logo_) {
-    return status_logo_.get();
-  }
   if (current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING) {
     return intro_done_ ? loop_frames_[current_frame_].get() : intro_frames_[current_frame_].get();
   }
@@ -560,7 +557,7 @@ static constexpr int kLayouts[LAYOUT_MAX][DIMENSION_MAX] = {
 
 int ScreenRecoveryUI::GetAnimationBaseline() const {
   return GetTextBaseline() - PixelsFromDp(kLayouts[layout_][ICON]) -
-         gr_get_height(GetCurrentFrame());
+         gr_get_height(loop_frames_[0].get());
 }
 
 int ScreenRecoveryUI::GetTextBaseline() const {
@@ -569,7 +566,7 @@ int ScreenRecoveryUI::GetTextBaseline() const {
 }
 
 int ScreenRecoveryUI::GetProgressBaseline() const {
-  int elements_sum = gr_get_height(GetCurrentFrame()) + PixelsFromDp(kLayouts[layout_][ICON]) +
+  int elements_sum = gr_get_height(loop_frames_[0].get()) + PixelsFromDp(kLayouts[layout_][ICON]) +
                      gr_get_height(installing_text_.get()) + PixelsFromDp(kLayouts[layout_][TEXT]) +
                      gr_get_height(progress_bar_fill_.get());
   int bottom_gap = (ScreenHeight() - elements_sum) / 2;
@@ -1094,12 +1091,12 @@ void ScreenRecoveryUI::DrawStatusPageLocked() {
   // Keep transitions free of headers, status messages, controls and overlays.
   gr_color(0, 0, 0, 255);
   gr_clear();
-  if (!status_logo_) return;
-  int logo_width = gr_get_width(status_logo_.get());
-  int logo_height = gr_get_height(status_logo_.get());
+  if (!m3e_logo_) return;
+  int logo_width = gr_get_width(m3e_logo_.get());
+  int logo_height = gr_get_height(m3e_logo_.get());
   int width = std::min(ScreenWidth(), logo_width);
   int height = std::min(ScreenHeight(), logo_height);
-  DrawSurface(status_logo_.get(), (logo_width - width) / 2, (logo_height - height) / 2,
+  DrawSurface(m3e_logo_.get(), (logo_width - width) / 2, (logo_height - height) / 2,
       width, height, (ScreenWidth() - width) / 2, (ScreenHeight() - height) / 2);
 }
 
@@ -1210,8 +1207,7 @@ void ScreenRecoveryUI::ProgressThreadLoop() {
 
       // update the installation animation, if active
       // skip this if we have a text overlay (too expensive to update)
-      if (!status_logo_ && (current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING) &&
-          !show_text) {
+      if ((current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING) && !show_text) {
         if (!intro_done_) {
           if (current_frame_ == intro_frames_.size() - 1) {
             intro_done_ = true;
@@ -1370,11 +1366,8 @@ bool ScreenRecoveryUI::Init(const std::string& locale) {
   SetLocale(locale);
   recovery_m3e::SetLanguage(recovery_m3e::LanguageForLocale(locale));
 
-  status_logo_ = LoadBitmap("uwu_recovery_status");
-  if (!status_logo_) {
-    // Preserve the upstream graphics when a device supplies its own resource set.
-    error_icon_ = LoadBitmap("icon_error");
-  }
+  error_icon_ = LoadBitmap("icon_error");
+  m3e_logo_ = LoadBitmap("uwu_recovery_m3e");
 
   progress_bar_empty_ = LoadBitmap("progress_empty");
   progress_bar_fill_ = LoadBitmap("progress_fill");
@@ -1399,9 +1392,7 @@ bool ScreenRecoveryUI::Init(const std::string& locale) {
 
   LoadWipeDataMenuText();
 
-  if (!status_logo_) {
-    LoadAnimation();
-  }
+  LoadAnimation();
 
   is_battery_less = android::base::GetBoolProperty("ro.recovery.batteryless", false);
   if (!is_battery_less)
@@ -1535,9 +1526,9 @@ void ScreenRecoveryUI::DrawInstallPageLocked() {
       menu_ && menu_->selection() == -1, title_lines_, palette,
       recovery_ui::IsFlashStage(m3e_install_stage_) ? "Flash partition image" : "Install update");
   auto layout = recovery_m3e::InstallationLayout(m, y, bottom, rows,
-      gr_get_width(status_logo_.get()), gr_get_height(status_logo_.get()));
+      gr_get_width(m3e_logo_.get()), gr_get_height(m3e_logo_.get()));
   if (layout.logo.w > 0) {
-    DrawSurface(status_logo_.get(), 0, 0, layout.logo.w, layout.logo.h,
+    DrawSurface(m3e_logo_.get(), 0, 0, layout.logo.w, layout.logo.h,
         layout.logo.x, layout.logo.y);
   }
   double fraction = progressScopeStart + progress * progressScopeSize;

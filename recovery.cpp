@@ -286,7 +286,7 @@ static InstallResult apply_update_menu(Device* device, Device::BuiltinAction* re
     if (chosen == Device::kGoBack || chosen == Device::kGoHome) {
       break;
     }
-    if (chosen == static_cast<size_t>(RecoveryUI::KeyError::INTERRUPTED)) {
+    if (chosen == static_cast<int>(RecoveryUI::KeyError::INTERRUPTED)) {
       return INSTALL_KEY_INTERRUPTED;
     }
 
