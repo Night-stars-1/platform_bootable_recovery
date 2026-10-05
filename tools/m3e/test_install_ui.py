@@ -140,7 +140,7 @@ bool FlashImage(Device*,const std::string&,const std::string&){++image_operation
 #define LOG(...) std::cout
 ''' + result + '\n' + update_menu + r'''
 void CheckNavigation() {
-  for(size_t child:{0,1}) {
+  for(size_t child:{0,1,2}) {
     Device d;Device::BuiltinAction reboot=Device::NO_ACTION;
     d.ui.selections={child,static_cast<size_t>(Device::kGoBack)};
     install_results={INSTALL_NONE};
