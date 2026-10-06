@@ -25,7 +25,6 @@ package {
 // The UI text fonts and Noto Sans SC glyph data use the SIL Open Font License.
 license {
     name: "recovery_m3e_font_license",
-        "recovery_m3e_symbols_license",
     visibility: [":__subpackages__"],
     license_kinds: ["SPDX-license-identifier-OFL"],
     license_text: [
