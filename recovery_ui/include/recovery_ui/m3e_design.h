@@ -124,11 +124,13 @@ inline void Header(Canvas& c,int width,int height,Page page,bool back_selected=f
       x+=TextWidth(letter,FontPixels(Font::DesignBrand,width),true, false, FaceFor(Font::DesignBrand));
     }
     x+=Dp(width,6);
-    Label(c,m,x,y,width-x-Dp(width,20),page==Page::Fastboot?"fastbootD":"Recovery",Font::DesignRecoveryTitle,text,true);
+    // These English brand titles retain their spelling and size in every locale.
+    c.Text(x,y,FitText(page==Page::Fastboot?"fastbootD":"Recovery",width-x-Dp(width,20),
+        FontPixels(Font::DesignRecoveryTitle,width),true,false,Face::Flex),Font::DesignRecoveryTitle,text,true);
   } else {
     std::string title=override_title.empty()?(page==Page::Reboot?"Reboot to...":"Install or update by..."):override_title;
     if(GetLanguage()==Language::Chinese && override_title.empty())title=Tr(page==Page::Reboot?"Reboot options":"Install update");
-    Label(c,m,Dp(width,21),y,width-Dp(width,42),title,Font::DesignTitle,text,true);
+    Label(c,m,Dp(width,21),y,width-Dp(width,42),title,Font::DesignPageTitle,text,true);
   }
 }
 inline void FastbootStatus(Canvas& c,int width,int height) {
@@ -138,7 +140,7 @@ inline void FastbootStatus(Canvas& c,int width,int height) {
   c.Text(b.x+(b.w-TextWidth(label,FontPixels(Font::DesignMenu,width),false,false,Face::Flex))/2,
       b.y+(b.h-FontLineHeight(Font::DesignMenu,width))/2,label,Font::DesignMenu,text,false);
   if(!layout.compact)Label(c,m,Dp(width,24),layout.heading,width-Dp(width,48),
-      GetLanguage()==Language::Chinese?Tr("Reboot options"):"Reboot to...",Font::DesignTitle,text);
+      GetLanguage()==Language::Chinese?Tr("Reboot options"):"Reboot to...",Font::DesignPageTitle,text);
 }
 struct HomeLayout {std::array<Rect,5> buttons;int height;bool valid;};
 inline HomeLayout Home(int width,int top,int available) {

@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 namespace recovery_m3e {
-enum class Font { Body, Menu, Title, Small, Heading, DesignTitle, DesignBrand, Code, Caption, Command, Instruction, Source, DesignBody, DesignMenu, DesignSmall, DesignHeading, DesignRecoveryTitle };
+enum class Font { Body, Menu, Title, Small, Heading, DesignTitle, DesignBrand, Code, Caption, Command, Instruction, Source, DesignBody, DesignMenu, DesignSmall, DesignHeading, DesignRecoveryTitle, DesignPageTitle };
 enum class Face { Legacy, Flex, Outfit, Code };
 inline Face FaceFor(Font font) {
   switch(font) {
@@ -41,7 +41,8 @@ inline int Dp(int width, float dp) {
 inline int FontPixels(Font font, int width) {
   switch(font) {
     case Font::DesignTitle: return Dp(width,GetLanguage()==Language::Chinese?18:22);
-    case Font::DesignRecoveryTitle: return Dp(width,GetLanguage()==Language::Chinese?22:28);
+    case Font::DesignRecoveryTitle: return Dp(width,28);
+    case Font::DesignPageTitle: return Dp(width,22);
     case Font::DesignBody: return Dp(width,GetLanguage()==Language::Chinese?13:14);
     case Font::DesignMenu: return Dp(width,GetLanguage()==Language::Chinese?16:18);
     case Font::DesignSmall: return Dp(width,12);
