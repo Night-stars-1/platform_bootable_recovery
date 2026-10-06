@@ -133,7 +133,7 @@ inline void Draw(Canvas& c,int width,int height,const std::string& input,
                  const Viewport& view,bool symbols,bool shift,int focus) {
   Metrics m(width);c.Fill({0,0,width,height},design::background);
   auto back=design::Back(width);Surface(c,back,back.h/2,design::surface,focus==-1,design::text,Dp(width,1));
-  design::Symbol(c,Inset(back,Dp(width,7)),design::Glyph::Back);
+  design::Symbol(c,Inset(back,Dp(width,14)),design::Glyph::Back);
   Label(c,m,back.x+back.w+Dp(width,14),back.y+Dp(width,3),width-back.x-back.w-Dp(width,30),"Terminal",Font::DesignMenu,design::text);
   auto keys=Keyboard(width,height,symbols,shift);int pad=Dp(width,12);
   int input_y=keys.front().bounds.y-Dp(width,32),top=view.Bounds().y-view.Offset()%view.LineHeight();

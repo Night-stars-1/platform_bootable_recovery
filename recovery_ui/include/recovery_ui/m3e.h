@@ -294,9 +294,10 @@ inline DeviceInfo ReadDeviceInfo(const std::vector<std::string>& lines) {
   }
   return info;
 }
-inline Rect BackBounds(const Metrics& m,int top) {return {m.inset,top,Dp(m.width,48),Dp(m.width,48)};}
+inline int BackButtonSize(int width) {return Dp(width,48);}
+inline Rect BackBounds(const Metrics& m,int top) {return {m.inset,top,BackButtonSize(m.width),BackButtonSize(m.width)};}
 inline int HeaderBottom(const Metrics& m,int top,bool dashboard) {
-  int y=top+Dp(m.width,48)+Dp(m.width,14);
+  int y=top+BackButtonSize(m.width)+Dp(m.width,14);
   y+=LineHeight(FontPixels(dashboard?Font::Title:Font::Heading,m.width))+Dp(m.width,dashboard?8:0);
   if(dashboard) y+=Dp(m.width,28);
   return y+Dp(m.width,dashboard?20:12);

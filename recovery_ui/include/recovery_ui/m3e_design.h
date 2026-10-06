@@ -25,9 +25,16 @@ constexpr Color green{0,185,99},muted{174,173,180},track{63,64,68};
 inline Metrics LayoutMetrics(int width) {
   Metrics m(width);m.inset=Dp(width,18);m.row_height=Dp(width,63);m.gap=Dp(width,5);return m;
 }
-inline Rect Back(int width) {return {Dp(width,27),Dp(width,28),Dp(width,33),Dp(width,33)};}
+inline Rect Back(int width) {return {Dp(width,27),Dp(width,28),BackButtonSize(width),BackButtonSize(width)};}
 inline int FooterTop(int width,int height) {return height-Dp(width,55);}
 inline int TitleTop(int width,int height) {return Dp(width,height<Dp(width,600)?65:112);}
+inline int PageTitleTop(int width,int height,Page page) {
+  int top=TitleTop(width,height);
+  if(page!=Page::Home && page!=Page::Fastboot) {
+    auto back=Back(width);top=std::max(top,back.y+back.h+Dp(width,14));
+  }
+  return top;
+}
 struct FastbootLayout {Rect status;int heading,menu;bool compact;};
 inline FastbootLayout Fastboot(int width,int height) {
   auto m=LayoutMetrics(width);bool compact=height<Dp(width,440);
@@ -43,7 +50,7 @@ inline FastbootLayout Fastboot(int width,int height) {
 }
 inline int MenuTop(int width,int height,Page page) {
   if(page==Page::Fastboot)return Fastboot(width,height).menu;
-  return TitleTop(width,height)+Dp(width,page==Page::Home?71:39);
+  return PageTitleTop(width,height,page)+Dp(width,page==Page::Home?71:39);
 }
 using Glyph=fontdata::Symbol;
 struct SymbolMask {std::vector<uint8_t> alpha;Rect ink;};
@@ -121,9 +128,9 @@ inline void Header(Canvas& c,int width,int height,Page page,bool back_selected=f
   Metrics m(width);
   if(page!=Page::Home && page!=Page::Fastboot) {
     auto b=Back(width);Surface(c,b,b.h/2,surface,back_selected,text,Dp(width,1));
-    Symbol(c,Inset(b,Dp(width,7)),Glyph::Back);
+    Symbol(c,Inset(b,Dp(width,14)),Glyph::Back);
   }
-  int y=TitleTop(width,height);
+  int y=PageTitleTop(width,height,page);
   if(page==Page::Home || page==Page::Fastboot) {
     int x=Dp(width,29);std::string brand="uwuAOSP";
     for(size_t i=0;i<brand.size();++i) {

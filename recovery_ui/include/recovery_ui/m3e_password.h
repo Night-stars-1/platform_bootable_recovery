@@ -46,7 +46,7 @@ inline int HitKey(const Layout& layout,int x,int y) {
 inline void Draw(Canvas& c,int width,int height,bool pin,size_t length,bool symbols,bool shift,int focus) {
   c.Fill({0,0,width,height},design::background);Metrics m(width);
   auto back=design::Back(width);Surface(c,back,back.h/2,design::surface,focus==-1,design::text,Dp(width,1));
-  design::Symbol(c,Inset(back,Dp(width,7)),design::Glyph::Back);
+  design::Symbol(c,Inset(back,Dp(width,14)),design::Glyph::Back);
   Label(c,m,back.x+back.w+Dp(width,14),back.y,width-back.x-back.w-Dp(width,30),
       "Unlock internal storage",Font::DesignPageTitle,design::text);
   auto layout=Keyboard(width,height,pin,symbols,shift);auto field=layout.field;
