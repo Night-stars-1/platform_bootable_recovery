@@ -21,6 +21,7 @@
 
 #include "recovery_ui/install_status.h"
 #include "recovery_ui/pattern_input.h"
+#include "recovery_ui/password_input.h"
 
 #include <linux/input.h>  // KEY_MAX
 
@@ -238,6 +239,7 @@ class RecoveryUI {
 
   // Optional graphical pattern input. Custom/stub UIs can decline it safely.
   virtual bool ReadPattern(recovery_ui::PatternInput&) { return false; }
+  virtual bool ReadPassword(recovery_ui::PasswordInput& input) { input.Clear(); return false; }
 
   // Erases any queued-up keys.
   virtual void FlushKeys();
@@ -335,7 +337,7 @@ class RecoveryUI {
   void EnqueueKey(int key_code);
   void EnqueueTouch(const Point& pos);
   void EnqueueGesture(EventType type, const Point& pos);
-  // Only the pattern page opts into raw gestures; ordinary menus keep swipe scrolling.
+  // Credential pages use raw gestures; ordinary menus keep swipe scrolling.
   std::atomic<bool> gesture_input_{false};
   std::atomic<bool> discard_touch_until_press_{false};
 

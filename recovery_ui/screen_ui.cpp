@@ -20,6 +20,7 @@
 #include "recovery_ui/m3e_install.h"
 #include "recovery_ui/m3e_design.h"
 #include "recovery_ui/m3e_terminal.h"
+#include "recovery_ui/m3e_password.h"
 #include "recovery_ui/terminal_session.h"
 
 #include <dirent.h>
@@ -850,6 +851,99 @@ void ScreenRecoveryUI::DrawPatternPageLocked() {
               pattern_finger_.x(), pattern_finger_.y(), pattern_focus_, palette);
 }
 
+void ScreenRecoveryUI::DrawPasswordPageLocked() {
+  M3eCanvas canvas;
+  recovery_m3e::password::Draw(canvas,ScreenWidth(),ScreenHeight(),password_input_->NumericOnly(),
+      password_input_->Size(),password_symbols_,password_shift_,password_focus_);
+}
+
+bool ScreenRecoveryUI::ReadPassword(recovery_ui::PasswordInput& input) {
+  using namespace recovery_m3e;
+  input.Clear();
+  if (IsKeyInterrupted()) return false;
+  bool previous_text;
+  {
+    std::lock_guard<std::mutex> lock(updateMutex);
+    previous_text=show_text;show_text=true;
+    password_input_=&input;password_symbols_=password_shift_=false;password_focus_=-2;
+    gesture_input_=true;FlushKeys();update_screen_locked();
+  }
+  bool accepted=false,done=false;int pressed=-2;Point origin;
+  while (!done) {
+    auto event=WaitInputEvent();
+    std::lock_guard<std::mutex> lock(updateMutex);
+    if (event.type()==EventType::EXTRA) {
+      if (event.key()==static_cast<int>(KeyError::INTERRUPTED) ||
+          event.key()==static_cast<int>(KeyError::TIMED_OUT)) done=true;
+      continue;
+    }
+    auto layout=password::Keyboard(ScreenWidth(),ScreenHeight(),input.NumericOnly(),password_symbols_,password_shift_);
+    auto invoke=[&](int index) {
+      if (index==-1) {done=true;return;}
+      if (index<0 || index>=static_cast<int>(layout.keys.size())) return;
+      const auto& key=layout.keys[index];
+      switch (key.action) {
+        case password::Action::Character: input.Append(key.character);break;
+        case password::Action::Symbols: password_symbols_=!password_symbols_;password_shift_=false;break;
+        case password::Action::Shift: password_shift_=!password_shift_;break;
+        case password::Action::Space: if(!input.NumericOnly())input.Append(' ');break;
+        case password::Action::Delete: input.EraseLast();break;
+        case password::Action::Clear: input.Clear();break;
+        case password::Action::Cancel: done=true;break;
+        case password::Action::Unlock: if(input.Size())accepted=done=true;break;
+      }
+      if(key.action==password::Action::Symbols || key.action==password::Action::Shift) {
+        auto changed=password::Keyboard(ScreenWidth(),ScreenHeight(),input.NumericOnly(),password_symbols_,password_shift_);
+        for(size_t i=0;i<changed.keys.size();++i)if(changed.keys[i].action==key.action)password_focus_=i;
+      }
+    };
+    if (event.type()==EventType::KEY) {
+      int key=event.key();
+      if (key==KEY_BACK || key==KEY_ESC) done=true;
+      else if (key==KEY_BACKSPACE || key==KEY_DELETE) input.EraseLast();
+      else if (key==KEY_UP || key==KEY_VOLUMEUP || key==KEY_LEFT)
+        password_focus_=password_focus_<=-1?static_cast<int>(layout.keys.size())-1:password_focus_-1;
+      else if (key==KEY_DOWN || key==KEY_VOLUMEDOWN || key==KEY_RIGHT)
+        password_focus_=password_focus_+1>=static_cast<int>(layout.keys.size())?-1:password_focus_+1;
+      else if (key==KEY_POWER) {
+        if(password_focus_==-2)password_focus_=0;else invoke(password_focus_);
+      } else if (key==KEY_ENTER) {
+        if(password_focus_>=0)invoke(password_focus_);else if(input.Size())accepted=done=true;
+      } else if (key==KEY_SPACE && !input.NumericOnly())input.Append(' ');
+      else if (key>=KEY_1 && key<=KEY_0)input.Append(key==KEY_0?'0':'1'+key-KEY_1);
+    } else if (event.type()==EventType::TOUCH_DOWN || event.type()==EventType::TOUCH_MOVE ||
+               event.type()==EventType::TOUCH_UP || event.type()==EventType::TOUCH) {
+      auto point=TouchPoint(event.pos());auto back=design::Back(ScreenWidth());
+      int action=password::HitKey(layout,point.x(),point.y());
+      if(action<0)action=-2;
+      if(InRounded(back,back.h/2,point.x(),point.y()))action=-1;
+      if(event.type()==EventType::TOUCH)invoke(action);
+      else if(event.type()==EventType::TOUCH_DOWN) {
+        pressed=action;origin=point;password_focus_=action;
+      } else {
+        int64_t dx=point.x()-origin.x(),dy=point.y()-origin.y();int slop=Dp(ScreenWidth(),16);
+        if(dx*dx+dy*dy>int64_t(slop)*slop)pressed=-2;
+        if(event.type()==EventType::TOUCH_UP) {
+          if(pressed!=-2 && action==pressed)invoke(action);
+          pressed=-2;
+        }
+      }
+    }
+    if (!done && event.type()!=EventType::TOUCH_MOVE)update_screen_locked();
+  }
+  {
+    std::lock_guard<std::mutex> lock(updateMutex);
+    gesture_input_=false;discard_touch_until_press_=true;FlushKeys();
+    password_input_=nullptr;password_symbols_=password_shift_=false;password_focus_=-2;
+    if(!accepted)input.Clear();
+    show_text=previous_text;
+    if(!menu_)menu_=std::move(transition_menu_);
+    menu_transition_=false;update_screen_locked();update_screen_locked();
+    transition_menu_=std::move(menu_);menu_transition_=true;
+  }
+  return accepted;
+}
+
 bool ScreenRecoveryUI::ReadPattern(recovery_ui::PatternInput& input) {
   using namespace recovery_m3e;
   if (IsKeyInterrupted() || input.GridSize() < 3 || input.GridSize() > 6) {
@@ -1119,7 +1213,7 @@ std::vector<std::string> ScreenRecoveryUI::GetMenuHelpMessage() const {
 // Redraws everything on the screen. Does not flip pages. Should only be called with updateMutex
 // locked.
 bool ScreenRecoveryUI::IsDesignMenuLocked() const {
-  if (!menu_ || pattern_input_) return false;
+  if (!menu_ || pattern_input_ || password_input_) return false;
   auto page = recovery_m3e::design::MenuPage(menu_->DashboardCandidate(),menu_->PageTitle());
   return fastbootd_logo_enabled_ ? page == recovery_m3e::design::Page::Fastboot :
       page != recovery_m3e::design::Page::None && page != recovery_m3e::design::Page::Fastboot;
@@ -1128,6 +1222,7 @@ bool ScreenRecoveryUI::IsDesignAdbLocked() const {
   return IsInstallPageLocked() && recovery_m3e::design::AdbPage(m3e_adb_sideload_,m3e_install_stage_);
 }
 void ScreenRecoveryUI::draw_screen_locked() {
+  if (password_input_) { DrawPasswordPageLocked(); return; }
   if (terminal_visible_) { DrawTerminalLocked(); return; }
   if (pattern_input_) {
     M3eSetColor(recovery_m3e::Palette::ForMode(false).background);
@@ -1253,13 +1348,14 @@ void ScreenRecoveryUI::draw_battery_capacity_locked() {
 // Should only be called with updateMutex locked.
 bool ScreenRecoveryUI::ShouldHoldMenuFrameLocked() const {
   return menu_transition_ && !menu_ && show_text && !terminal_visible_ &&
-      m3e_install_stage_ == InstallStage::NONE && !pattern_input_ &&
+      m3e_install_stage_ == InstallStage::NONE && !pattern_input_ && !password_input_ &&
       !(file_viewer_text_ && text_ == file_viewer_text_);
 }
 
 void ScreenRecoveryUI::update_screen_locked() {
   if (ShouldHoldMenuFrameLocked()) return;
-  draw_screen_locked();
+  if (password_input_) DrawPasswordPageLocked();
+  else draw_screen_locked();
   gr_flip();
 }
 
@@ -1267,7 +1363,8 @@ void ScreenRecoveryUI::update_screen_locked() {
 // Should only be called with updateMutex locked.
 void ScreenRecoveryUI::update_progress_locked() {
   if (ShouldHoldMenuFrameLocked()) return;
-  if (IsInstallPageLocked() || show_text || !pagesIdentical) {
+  if (password_input_) DrawPasswordPageLocked();
+  else if (IsInstallPageLocked() || show_text || !pagesIdentical) {
     draw_screen_locked();  // Must redraw the whole screen
     pagesIdentical = true;
   } else {

@@ -56,6 +56,7 @@ struct ScreenRecoveryUI {
   bool fastbootd_logo_enabled_=false;
   bool IsDesignMenuLocked() const;bool IsDesignAdbLocked() const;
   void* pattern_input_=nullptr;char** text_=nullptr;char** file_viewer_text_=nullptr;
+  void* password_input_=nullptr;void DrawPasswordPageLocked(){++redraws;}
   void draw_screen_locked(){++redraws;}void draw_foreground_locked(){++redraws;}
   void update_screen_locked();void update_progress_locked();
   bool ShouldHoldMenuFrameLocked() const;
@@ -380,12 +381,178 @@ void Render(PixelCanvas& canvas,int w,int h) {
 '''
 
 
+def password_flow():
+    """Replay the actual complete credential UI; platform I/O and backend are host substitutes."""
+    screen = (ROOT / 'recovery_ui/screen_ui.cpp').read_text(encoding='utf-8')
+    source = r'''
+#include "recovery_ui/password_input.h"
+#include "recovery_ui/pattern_input.h"
+namespace PasswordFlow {
+constexpr int KEY_ESC=1,KEY_1=2,KEY_0=11,KEY_BACKSPACE=14,KEY_ENTER=28,KEY_SPACE=57,
+  KEY_UP=103,KEY_LEFT=105,KEY_RIGHT=106,KEY_DOWN=108,KEY_DELETE=111,
+  KEY_VOLUMEDOWN=114,KEY_VOLUMEUP=115,KEY_POWER=116,KEY_BACK=158;
+int width=360,height=640;
+struct Point {int px=0,py=0;int x() const{return px;}int y() const{return py;}};
+struct M3eCanvas : PixelCanvas {
+  M3eCanvas():PixelCanvas(PasswordFlow::width,PasswordFlow::height){}
+  ~M3eCanvas(){for(const auto& run:runs)assert(run.text!="aB9! ");}
+};
+struct ScreenRecoveryUI {
+  using InstallStage=recovery_ui::InstallStage;
+  enum EventType {KEY,EXTRA,TOUCH,TOUCH_DOWN,TOUCH_MOVE,TOUCH_UP};
+  enum class KeyError : int {TIMED_OUT=-1,INTERRUPTED=-2};
+  struct InputEvent {
+    EventType kind;int code=0;Point point;
+    EventType type() const{return kind;}int key() const{return code;}Point pos() const{return point;}
+  };
+  std::mutex updateMutex;recovery_ui::PasswordInput* password_input_=nullptr;
+  bool password_symbols_=false,password_shift_=false,gesture_input_=false,discard_touch_until_press_=false;
+  bool show_text=false,menu_transition_=true,interrupted=false;int password_focus_=-2,redraws=0,errors=0;
+  std::unique_ptr<int> menu_,transition_menu_=std::make_unique<int>(7);
+  std::deque<std::function<InputEvent(ScreenRecoveryUI&)>> events;
+  int ScreenWidth(){return width;}int ScreenHeight(){return height;}
+  Point TouchPoint(Point p){return p;}bool IsKeyInterrupted(){return interrupted;}
+  void FlushKeys(){}void SetInstallStage(InstallStage){}void Print(const char*,...){}
+  void update_screen_locked(){++redraws;if(password_input_)DrawPasswordPageLocked();}
+  void DrawPasswordPageLocked();bool ReadPassword(recovery_ui::PasswordInput&);
+  bool ReadPattern(recovery_ui::PatternInput&){return false;}
+  InputEvent WaitInputEvent(){assert(!events.empty());auto next=events.front();events.pop_front();return next(*this);}
+};
+''' + function(screen, 'void ScreenRecoveryUI::DrawPasswordPageLocked()') + '\n' + function(screen, 'bool ScreenRecoveryUI::ReadPassword(') + r'''
+struct Input final : recovery_ui::PasswordInput {
+  bool pin;std::array<uint8_t,128> bytes{};size_t count=0;
+  explicit Input(bool numeric):pin(numeric){}
+  bool NumericOnly() const override{return pin;}size_t Size() const override{return count;}
+  bool Append(uint8_t c) override {
+    if(count==bytes.size() || (pin?(c<'0' || c>'9'):(c<32 || c>126)))return false;
+    bytes[count++]=c;return true;
+  }
+  void EraseLast() override{if(count)bytes[--count]=0;}
+  void Clear() override{bytes.fill(0);count=0;}
+};
+void Tap(ScreenRecoveryUI& ui,password::Action action,uint8_t character=0,bool drag=false) {
+  auto position=[=](ScreenRecoveryUI& screen) {
+    auto layout=password::Keyboard(width,height,screen.password_input_->NumericOnly(),screen.password_symbols_,screen.password_shift_);
+    for(const auto& key:layout.keys)if(key.action==action && (action!=password::Action::Character || key.character==character))
+      return Point{key.bounds.x+key.bounds.w/2,key.bounds.y+key.bounds.h/2};
+    assert(false);return Point{};
+  };
+  ui.events.push_back([=](ScreenRecoveryUI& s){return ScreenRecoveryUI::InputEvent{ScreenRecoveryUI::TOUCH_DOWN,0,position(s)};});
+  if(drag)ui.events.push_back([=](ScreenRecoveryUI& s){auto p=position(s);p.px+=Dp(width,30);return ScreenRecoveryUI::InputEvent{ScreenRecoveryUI::TOUCH_MOVE,0,p};});
+  ui.events.push_back([=](ScreenRecoveryUI& s){return ScreenRecoveryUI::InputEvent{ScreenRecoveryUI::TOUCH_UP,0,position(s)};});
+}
+void Type(ScreenRecoveryUI& ui,bool pin) {
+  if(pin)for(uint8_t ch:std::string("1234"))Tap(ui,password::Action::Character,ch);
+  else {
+    Tap(ui,password::Action::Character,'a');Tap(ui,password::Action::Shift);
+    Tap(ui,password::Action::Character,'B');Tap(ui,password::Action::Symbols);
+    Tap(ui,password::Action::Character,'9');Tap(ui,password::Action::Shift);
+    Tap(ui,password::Action::Character,'!');Tap(ui,password::Action::Space);
+  }
+}
+void CryptoCheck();
+void Check(int w,int h) {
+  width=w;height=h;
+  for(bool pin:{false,true}) {
+    auto layout=password::Keyboard(w,h,pin,false,false);
+    for(const auto& key:layout.keys)assert(password::HitKey(layout,key.bounds.x+key.bounds.w/2,key.bounds.y+key.bounds.h/2)>=0);
+    if(!pin) {
+      std::array<bool,127> characters{};characters[' ']=true;
+      for(bool symbols:{false,true})for(bool shift:{false,true})
+        for(const auto& key:password::Keyboard(w,h,false,symbols,shift).keys)
+          if(key.action==password::Action::Character)characters[key.character]=true;
+      for(int ch=32;ch<=126;++ch)assert(characters[ch]);
+    }
+    ScreenRecoveryUI accepted;Input input(pin);input.Append('9');
+    Tap(accepted,password::Action::Unlock); // Empty input is not submitted.
+    for(auto kind:{ScreenRecoveryUI::TOUCH_DOWN,ScreenRecoveryUI::TOUCH_UP,ScreenRecoveryUI::TOUCH})
+      accepted.events.push_back([kind](auto& screen){
+        auto field=password::Keyboard(width,height,screen.password_input_->NumericOnly(),false,false).field;
+        return ScreenRecoveryUI::InputEvent{kind,0,{field.x+field.w/2,field.y+field.h/2}};
+      }); // Tapping the field or blank area does not cancel credential entry.
+    Tap(accepted,password::Action::Character,pin?'1':'a',true); // Dragging does not enter a key.
+    Tap(accepted,password::Action::Character,pin?'2':'b');Tap(accepted,password::Action::Clear);
+    Type(accepted,pin);Tap(accepted,password::Action::Delete);
+    Tap(accepted,pin?password::Action::Character:password::Action::Space,pin?'4':0);
+    Tap(accepted,password::Action::Unlock);
+    assert(accepted.ReadPassword(input) && accepted.events.empty());
+    auto expected=pin?std::string("1234"):std::string("aB9! ");
+    assert(input.count==expected.size() && std::equal(expected.begin(),expected.end(),input.bytes.begin()));
+    assert(!accepted.password_input_ && !accepted.gesture_input_ && !accepted.show_text);
+    assert(accepted.discard_touch_until_press_ && accepted.transition_menu_ && *accepted.transition_menu_==7);
+    for(bool interrupted:{false,true}) {
+      ScreenRecoveryUI cancelled;Input secret(pin);Type(cancelled,pin);
+      if(interrupted)cancelled.events.push_back([](auto&){return ScreenRecoveryUI::InputEvent{ScreenRecoveryUI::EXTRA,-2,{}};});
+      else Tap(cancelled,password::Action::Cancel);
+      assert(!cancelled.ReadPassword(secret) && !secret.Size());
+      assert(std::all_of(secret.bytes.begin(),secret.bytes.end(),[](uint8_t byte){return byte==0;}));
+    }
+    ScreenRecoveryUI keys;Input digits(pin);
+    keys.events.push_back([](auto&){return ScreenRecoveryUI::InputEvent{ScreenRecoveryUI::KEY,KEY_1,{}};});
+    keys.events.push_back([](auto&){return ScreenRecoveryUI::InputEvent{ScreenRecoveryUI::KEY,KEY_ENTER,{}};});
+    assert(keys.ReadPassword(digits) && digits.Size()==1 && digits.bytes[0]=='1');
+    ScreenRecoveryUI navigation;Input key_input(pin);
+    for(int code:{KEY_VOLUMEDOWN,KEY_VOLUMEDOWN,KEY_POWER,KEY_VOLUMEUP,KEY_VOLUMEUP,KEY_POWER})
+      navigation.events.push_back([code](auto&){return ScreenRecoveryUI::InputEvent{ScreenRecoveryUI::KEY,code,{}};});
+    assert(navigation.ReadPassword(key_input) && key_input.Size()==1 && key_input.bytes[0]==(pin?'1':'q'));
+  }
+  if(w==360 && h==640)CryptoCheck();
+}
+'''
+    crypto_path = ROOT / 'install/crypto.cpp'
+    if crypto_path.exists() and 'ReadPassword(input)' in crypto_path.read_text(encoding='utf-8'):
+        crypto = crypto_path.read_text(encoding='utf-8')
+        source += r'''
+namespace recovery_crypto {
+constexpr uint32_t RC_CREDENTIAL_PATTERN=3,RC_CREDENTIAL_PIN=1,RC_CREDENTIAL_PASSWORD=2;
+using Credential=Input;
+enum class Status {Ready,CredentialRequired,WrongCredential,IoError};enum class Stage {Credential};
+struct Result {Status status;uint32_t credential_type=1,pattern_size=3;};
+int attempts=0;uint32_t type=1;
+struct Session {
+  Result Prepare(uint32_t,const std::function<void(Stage)>&){attempts=0;return {Status::CredentialRequired,type};}
+  Result Unlock(const Credential& input,const std::function<void(Stage)>&) {
+    auto expected=type==1?std::string("1234"):std::string("aB9! ");
+    assert(input.count==expected.size() && std::equal(expected.begin(),expected.end(),input.bytes.begin()));
+    return {++attempts==1?Status::WrongCredential:Status::Ready,type};
+  }
+};
+const char* StageMessage(Stage){return "Host backend";}
+const char* StatusMessage(Status){return "The credential was not accepted";}
+}
+using namespace recovery_crypto;
+using RecoveryUI=ScreenRecoveryUI;
+struct Device {ScreenRecoveryUI ui;ScreenRecoveryUI* GetUI(){return &ui;}};
+constexpr uint32_t kUser=0;
+void ShowError(Device* d,const Result&){++d->ui.errors;}
+size_t Select(Device*,const std::vector<std::string>& headers,const std::vector<std::string>& items){
+  assert(headers.front()=="Unlock internal storage" && items.front()=="Try again");return 0;
+}
+''' + function(crypto, 'bool ReadCredential(') + '\n' + function(crypto, 'bool UnlockStorage(') + r'''
+void CryptoCheck() {
+  for(bool pin:{false,true}) {
+    type=pin?1:2;Device device;
+    for(int attempt=0;attempt<2;++attempt){Type(device.ui,pin);Tap(device.ui,password::Action::Unlock);}
+    assert(UnlockStorage(&device) && attempts==2 && device.ui.events.empty());
+    Device cancelled;Type(cancelled.ui,pin);Tap(cancelled.ui,password::Action::Cancel);
+    assert(!UnlockStorage(&cancelled) && attempts==0);
+  }
+}
+'''
+        # Host fixture implements only the existing credential storage contract.
+        source = source.replace('explicit Input(bool numeric):pin(numeric){}', 'explicit Input(bool numeric=false):pin(numeric){}\n  bool secure() const{return true;}const uint8_t* data() const{return bytes.data();}size_t size() const{return count;}')
+    else:
+        source += 'void CryptoCheck(){}\n'
+    return source + '} // namespace PasswordFlow\n'
+
+
 def compile_android(clang, build):
     source = (ROOT / 'recovery_ui/screen_ui.cpp').read_text(encoding='utf-8')
     unit = '''#include "recovery_ui/screen_ui.h"
 #include "recovery_ui/m3e_install.h"
 #include "recovery_ui/m3e_design.h"
 #include "recovery_ui/m3e_terminal.h"
+#include "recovery_ui/m3e_password.h"
 #include "recovery_ui/terminal_session.h"
 #include <cstring>
 unsigned int gr_get_width(const GRSurface*);
@@ -423,6 +590,8 @@ static void M3eSetColor(recovery_m3e::Color) {}
                       'bool ScreenRecoveryUI::IsDesignAdbLocked() const',
                       'void ScreenRecoveryUI::DrawTerminalLocked()',
                       'void ScreenRecoveryUI::ShowTerminal()',
+                      'void ScreenRecoveryUI::DrawPasswordPageLocked()',
+                      'bool ScreenRecoveryUI::ReadPassword(',
                       'void ScreenRecoveryUI::DrawInstallPageLocked()'):
         unit += '\n' + function(source, signature) + '\n'
     path = build / 'android-install-ui.cpp'
@@ -451,6 +620,19 @@ bool clear_bootloader_message(std::string*);
     entry_path = build / 'android-fastboot-entry.cpp'
     entry_path.write_text(entry, encoding='utf-8')
     subprocess.run(flags + [str(entry_path), '-o', str(build / 'android-fastboot-entry.o')], check=True)
+    crypto_path = ROOT / 'install/crypto.cpp'
+    if crypto_path.exists() and 'ReadPassword(input)' in crypto_path.read_text(encoding='utf-8'):
+        crypto = crypto_path.read_text(encoding='utf-8')
+        credential = '''#include "recovery_ui/device.h"
+#include "recovery_crypto/session.h"
+using recovery_crypto::Credential;
+using recovery_crypto::Status;
+void ShowError(Device*,const recovery_crypto::Result&);
+'''+function(crypto, 'bool ReadCredential(')
+        path = build / 'android-credential-input.cpp'
+        path.write_text(credential, encoding='utf-8')
+        subprocess.run(flags + ['-I'+str(ROOT / 'crypto/include'),str(path),'-o',
+                                str(build / 'android-credential-input.o')], check=True)
     print('PASS: Android arm64 object compilation; real UI class headers and canvas, minui API declarations')
 
 
@@ -460,6 +642,7 @@ def run(cxx, out, ndk_clang=None):
         build = Path(temp)
         (build / 'install_routing.inc').write_text(routing_test(), encoding='utf-8')
         (build / 'fastboot_flow.inc').write_text(fastboot_flow(), encoding='utf-8')
+        (build / 'password_flow.inc').write_text(password_flow(), encoding='utf-8')
         exe = build / ('test.exe' if os.name == 'nt' else 'test')
         subprocess.run([cxx, '-std=c++17', '-O1', '-Wall', '-Wextra', '-Werror',
                         '-DM3E_INSTALL_ROUTING_TEST', '-I' + str(ROOT / 'recovery_ui/include'),

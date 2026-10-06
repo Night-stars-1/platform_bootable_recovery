@@ -352,6 +352,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   void ClearText() override;
   void ShowFile(const std::string& filename) override;
   bool ReadPattern(recovery_ui::PatternInput& input) override;
+  bool ReadPassword(recovery_ui::PasswordInput& input) override;
 
   // menu display
   size_t ShowMenu(const std::vector<std::string>& headers, const std::vector<std::string>& items,
@@ -521,6 +522,11 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   bool IsInstallPageLocked() const;
   void DrawInstallPageLocked();
   void DrawPatternPageLocked();
+  void DrawPasswordPageLocked();
+  recovery_ui::PasswordInput* password_input_ = nullptr;
+  bool password_symbols_ = false;
+  bool password_shift_ = false;
+  int password_focus_ = -2;
   Point TouchPoint(const Point& raw) const;
   // Non-owning view into the caller's locked credential. Protected by updateMutex.
   recovery_ui::PatternInput* pattern_input_ = nullptr;

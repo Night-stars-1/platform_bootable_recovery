@@ -6,6 +6,7 @@
 #include "recovery_ui/m3e_install.h"
 #include "recovery_ui/m3e_design.h"
 #include "recovery_ui/m3e_terminal.h"
+#include "recovery_ui/m3e_password.h"
 #include <cassert>
 #include <fstream>
 #include <iostream>
@@ -82,6 +83,7 @@ const char* names[]={"waiting","verifying","installing","success","error","cance
 
 #ifdef M3E_INSTALL_ROUTING_TEST
 #include "fastboot_flow.inc"
+#include "password_flow.inc"
 #endif
 
 void Render(const std::string& out,int w,int h,bool zh,int index,bool pixels=false) {
@@ -205,7 +207,13 @@ void RenderDesign(const std::string& out,int w,int h,bool zh,int page,bool pixel
   SetScaleBasis(w,h);SetLanguage(zh?Language::Chinese:Language::English);
   PixelCanvas c(w,h,pixels);c.Fill({0,0,w,h},design::background);
   const std::vector<std::string> details{"Product name - astonc","Version 17.0.130 (2026-10-05)"};
-  if(page==6) {
+  if(page>=7) {
+    password::Draw(c,w,h,page==7,8,false,false,-2);
+#ifdef M3E_INSTALL_ROUTING_TEST
+    PasswordFlow::Check(w,h);
+#endif
+  }
+  else if(page==6) {
 #ifdef M3E_INSTALL_ROUTING_TEST
     FastbootFlow::Render(c,w,h);
 #else
@@ -243,7 +251,7 @@ void RenderDesign(const std::string& out,int w,int h,bool zh,int page,bool pixel
     }
     design::Footer(c,w,h,details);
   }
-  if(page!=5)design::Battery(c,w,82,false);
+  if(page!=5 && page<7)design::Battery(c,w,82,false);
   // Check visible icon alignment in every complete page, including small screens.
   for(const auto& mask:c.symbol_masks) {
     assert(mask.ink.w>0 && mask.ink.h>0);
@@ -268,10 +276,10 @@ int main(int argc,char** argv) {
     for(bool zh:{false,true}) {
       for(int i=0;i<6;++i)Render(out,w,h,zh,i);
       for(int count:{1,2,4})for(int first=0;first<count;++first)RenderList(out,w,h,zh,count,first);
-      for(int page=0;page<7;++page)RenderDesign(out,w,h,zh,page);
+      for(int page=0;page<9;++page)RenderDesign(out,w,h,zh,page);
     }
   for(bool zh:{false,true})for(int i=0;i<6;++i)Render(out,1220,2712,zh,i,true);
   for(bool zh:{false,true})for(int count:{1,2,4})RenderList(out,1220,2712,zh,count,0,true);
-  for(bool zh:{false,true})for(int page=0;page<7;++page)RenderDesign(out,1220,2712,zh,page,true);
+  for(bool zh:{false,true})for(int page=0;page<9;++page)RenderDesign(out,1220,2712,zh,page,true);
   std::cout<<"PASS: six stages, two languages, seven screen sizes, grouped lists with selection, scrolling and matching touch geometry\n";
 }
