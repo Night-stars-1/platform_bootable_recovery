@@ -36,6 +36,7 @@ class Canvas {
     for(int y=0;y<b.h;++y)for(int x=0;x<b.w;++x)
       if(alpha[y*b.w+x]>=128)Fill({b.x+x,b.y+y,1,1},color);
   }
+  virtual void TextMask(Rect b,const std::vector<uint8_t>& alpha,Color color) {Mask(b,alpha,color);}
 };
 struct Palette {
   Color background{18,17,24},surface{30,28,38},card{38,35,47};

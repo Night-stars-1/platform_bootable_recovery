@@ -42,6 +42,9 @@ struct PixelCanvas : Canvas {
     Mask({x,y,raster.width,raster.height},raster.alpha,c);
     text_mask=false;
   }
+  void TextMask(Rect b,const std::vector<uint8_t>& alpha,Color c) override {
+    text_mask=true;Mask(b,alpha,c);text_mask=false;
+  }
   void Mask(Rect b,const std::vector<uint8_t>& alpha,Color c) override {
     assert(b.x>=0 && b.y>=0 && b.w>=0 && b.h>=0 && b.x+b.w<=width && b.y+b.h<=height);
     assert(alpha.size()==static_cast<size_t>(b.w*b.h));

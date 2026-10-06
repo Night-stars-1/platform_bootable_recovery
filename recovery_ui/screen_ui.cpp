@@ -117,6 +117,8 @@ void ScreenRecoveryUI::ShowTerminal() {
     terminal_visible_=true;terminal_shift_=terminal_symbols_=false;terminal_focus_=-1;
     terminal_state_=std::make_unique<recovery_m3e::terminal::State>();
     terminal_state_->output.Append(start_error.data(),start_error.size());
+    auto bounds=recovery_m3e::terminal::OutputBounds(ScreenWidth(),ScreenHeight());
+    SetTouchMoveCoalescing(true,Point(bounds.x,bounds.y),Point(bounds.x+bounds.w,bounds.y+bounds.h));
     terminal_input_.clear();gesture_input_=true;FlushKeys();update_screen_locked();
   }
   auto& output=terminal_state_->output;
@@ -136,7 +138,7 @@ void ScreenRecoveryUI::ShowTerminal() {
       if (count<0) break;
     }
   });
-  bool done=false,dragging=false,moved=false;int pressed=-2,remainder=0;Point origin,last;
+  bool done=false,dragging=false,moved=false;int pressed=-2;Point origin,last;
   while (!done) {
     auto event=WaitInputEvent();
     std::lock_guard<std::mutex> lock(updateMutex);
@@ -175,15 +177,14 @@ void ScreenRecoveryUI::ShowTerminal() {
       auto& view=terminal_state_->view;view.Update(output,ScreenWidth(),ScreenHeight());
       if(event.type()==EventType::TOUCH)invoke(action);
       else if(event.type()==EventType::TOUCH_DOWN) {
-        origin=last=point;pressed=action;moved=false;remainder=0;
+        origin=last=point;pressed=action;moved=false;
         dragging=view.Bounds().Contains(point.x(),point.y());
         if(action>=-1)terminal_focus_=action;
       } else {
         int64_t dx=point.x()-origin.x(),dy=point.y()-origin.y();int slop=recovery_m3e::Dp(ScreenWidth(),16);
         if(dx*dx+dy*dy>int64_t(slop)*slop) {pressed=-2;moved=true;}
-        if(dragging && moved) {
-          remainder+=last.y()-point.y();int rows=remainder/view.LineHeight();
-          view.Scroll(rows);remainder-=rows*view.LineHeight();last=point;
+        if(dragging) {
+          view.ScrollPixels(last.y()-point.y());last=point;
         }
         if(event.type()==EventType::TOUCH_UP) {
           if(!moved && pressed!=-2 && action==pressed)invoke(action);
@@ -209,6 +210,7 @@ void ScreenRecoveryUI::ShowTerminal() {
   stopped=true;if(reader.joinable())reader.join();session.Close();
   {
     std::lock_guard<std::mutex> lock(updateMutex);
+    SetTouchMoveCoalescing(false,Point(),Point());
     gesture_input_=false;discard_touch_until_press_=true;
     terminal_visible_=false;terminal_input_.clear();terminal_state_.reset();
     menu_transition_=true;FlushKeys();

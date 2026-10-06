@@ -76,39 +76,56 @@ class Viewport {
   struct Row {std::string text;uint64_t line;size_t part;};
   void Update(const Output& output,int width,int height) {
     if(width==width_ && height==height_ && output.Revision()==revision_)return;
-    Row anchor=rows_.empty()?Row{"",output.FirstLine(),0}:rows_[std::min(first_,static_cast<int>(rows_.size())-1)];
+    Row anchor=rows_.empty()?Row{"",output.FirstLine(),0}:rows_[std::min(First(),static_cast<int>(rows_.size())-1)];
+    int inset=offset_%line_height_;
     width_=width;height_=height;revision_=output.Revision();bounds_=OutputBounds(width,height);
     line_height_=FontLineHeight(Font::Code,width);visible_=bounds_.h/line_height_;
-    rows_.clear();
+    rows_.clear();rasters_.clear();
     for(size_t i=0;i<output.lines.size();++i) {
       if(output.lines[i].empty()) {rows_.push_back({"",output.FirstLine()+i,0});continue;}
       size_t part=0;
       for(auto& row:WrapText(output.lines[i],bounds_.w,FontPixels(Font::Code,width),false,true,Face::Code))
         rows_.push_back({std::move(row),output.FirstLine()+i,part++});
     }
-    if(following_)first_=Maximum();
+    if(following_)offset_=MaximumPixels();
     else {
       auto found=std::lower_bound(rows_.begin(),rows_.end(),anchor,[](const Row& a,const Row& b) {
         return a.line<b.line || (a.line==b.line && a.part<b.part);
       });
-      first_=std::min(Maximum(),static_cast<int>(found-rows_.begin()));
+      bool retained=found!=rows_.end() && found->line==anchor.line && found->part==anchor.part;
+      offset_=std::min(MaximumPixels(),static_cast<int>(found-rows_.begin())*line_height_+(retained?inset:0));
     }
   }
   void Scroll(int rows) {
-    first_=std::clamp(first_+rows,0,Maximum());following_=first_==Maximum();
+    ScrollPixels(rows*line_height_);
   }
-  void Bottom() {first_=Maximum();following_=true;}
-  void Top() {first_=0;following_=Maximum()==0;}
+  void ScrollPixels(int pixels) {
+    offset_=std::clamp(offset_+pixels,0,MaximumPixels());following_=offset_==MaximumPixels();
+  }
+  void Bottom() {offset_=MaximumPixels();following_=true;}
+  void Top() {offset_=0;following_=MaximumPixels()==0;}
   const std::vector<Row>& Rows() const {return rows_;}
   Rect Bounds() const {return bounds_;}
-  int First() const {return first_;}
+  int First() const {return offset_/line_height_;}
+  int Offset() const {return offset_;}
   int Visible() const {return visible_;}
   int LineHeight() const {return line_height_;}
-  int Maximum() const {return std::max(0,static_cast<int>(rows_.size())-visible_);}
+  int MaximumPixels() const {return std::max(0,static_cast<int>(rows_.size())*line_height_-bounds_.h);}
+  int Maximum() const {return MaximumPixels()/line_height_;}
   bool Following() const {return following_;}
+  const TextBitmap& Raster(int row) const {
+    for(auto& entry:rasters_)if(entry.first==row)return entry.second;
+    // Retain only the visible region and its neighbours, rather than rasterizing all history.
+    rasters_.erase(std::remove_if(rasters_.begin(),rasters_.end(),[&](const auto& entry) {
+      return entry.first<First()-1 || entry.first>First()+visible_+2;
+    }),rasters_.end());
+    rasters_.emplace_back(row,RasterText(rows_[row].text,FontPixels(Font::Code,width_),false,true,Face::Code));
+    return rasters_.back().second;
+  }
  private:
   std::vector<Row> rows_;Rect bounds_{};
-  int width_=0,height_=0,first_=0,visible_=0,line_height_=1;
+  mutable std::vector<std::pair<int,TextBitmap>> rasters_;
+  int width_=0,height_=0,offset_=0,visible_=0,line_height_=1;
   uint64_t revision_=0;bool following_=true;
 };
 struct State {Output output;Viewport view;};
@@ -119,13 +136,26 @@ inline void Draw(Canvas& c,int width,int height,const std::string& input,
   design::Symbol(c,Inset(back,Dp(width,7)),design::Glyph::Back);
   Label(c,m,back.x+back.w+Dp(width,14),back.y+Dp(width,3),width-back.x-back.w-Dp(width,30),"Terminal",Font::DesignMenu,design::text);
   auto keys=Keyboard(width,height,symbols,shift);int pad=Dp(width,12);
-  int input_y=keys.front().bounds.y-Dp(width,32),top=view.Bounds().y;
-  int end=std::min(static_cast<int>(view.Rows().size()),view.First()+view.Visible());
-  for(int i=view.First();i<end;++i) {c.Text(pad,top,view.Rows()[i].text,Font::Code,design::text,false);top+=view.LineHeight();}
-  if(view.Maximum()>0 && view.Visible()>0) {
-    int track=view.Visible()*view.LineHeight();
-    int thumb=std::clamp(static_cast<int>(int64_t(track)*view.Visible()/view.Rows().size()),std::min(Dp(width,12),track),track);
-    int y=view.Bounds().y+static_cast<int>(int64_t(track-thumb)*view.First()/view.Maximum());
+  int input_y=keys.front().bounds.y-Dp(width,32),top=view.Bounds().y-view.Offset()%view.LineHeight();
+  int bottom=view.Bounds().y+view.Bounds().h;
+  for(int i=view.First();i<static_cast<int>(view.Rows().size()) && top<bottom;++i,top+=view.LineHeight()) {
+    if(view.Rows()[i].text.empty())continue;
+    const auto& bitmap=view.Raster(i);
+    int start=std::max(0,view.Bounds().y-top),end=std::min(bitmap.height,bottom-top);
+    int width=std::min(bitmap.width,view.Bounds().w);
+    if(end<=start || width<=0)continue;
+    if(start==0 && end==bitmap.height && width==bitmap.width)
+      c.TextMask({pad,top,width,bitmap.height},bitmap.alpha,design::text);
+    else {
+      std::vector<uint8_t> clipped(width*(end-start));
+      for(int y=start;y<end;++y)std::copy_n(bitmap.alpha.data()+y*bitmap.width,width,clipped.data()+(y-start)*width);
+      c.TextMask({pad,top+start,width,end-start},clipped,design::text);
+    }
+  }
+  if(view.MaximumPixels()>0 && view.Visible()>0) {
+    int track=view.Bounds().h;
+    int thumb=std::clamp(static_cast<int>(int64_t(track)*track/(view.Rows().size()*view.LineHeight())),std::min(Dp(width,12),track),track);
+    int y=view.Bounds().y+static_cast<int>(int64_t(track-thumb)*view.Offset()/view.MaximumPixels());
     Rounded(c,{width-Dp(width,5),y,Dp(width,2),thumb},Dp(width,1),design::muted);
   }
   Rounded(c,{pad,input_y,width-2*pad,Dp(width,26)},Dp(width,6),design::surface);

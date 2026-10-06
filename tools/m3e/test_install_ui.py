@@ -552,6 +552,9 @@ def terminal_flow():
     fixture = (ROOT / 'tools/m3e/terminal_flow_fixture.inc').read_text(encoding='utf-8')
     methods = '\n'.join(function(screen, signature) for signature in (
         'void ScreenRecoveryUI::DrawTerminalLocked()', 'void ScreenRecoveryUI::ShowTerminal()'))
+    ui = (ROOT / 'recovery_ui/ui.cpp').read_text(encoding='utf-8')
+    for signature in ('void RecoveryUI::EnqueueGesture(', 'void RecoveryUI::SetTouchMoveCoalescing('):
+        methods += '\n' + function(ui, signature).replace('RecoveryUI::', 'ScreenRecoveryUI::')
     return fixture.replace('// ACTUAL_UI_METHODS', methods)
 
 
@@ -582,6 +585,10 @@ class GRSurface {
 static void M3eSetColor(recovery_m3e::Color) {}
 '''
     unit += function(source, 'class M3eCanvas :') + ';\n'
+    unit += function((ROOT / 'recovery_ui/ui.cpp').read_text(encoding='utf-8'),
+                     'void RecoveryUI::EnqueueGesture(') + '\n'
+    unit += function((ROOT / 'recovery_ui/ui.cpp').read_text(encoding='utf-8'),
+                     'void RecoveryUI::SetTouchMoveCoalescing(') + '\n'
     for signature in ('void ScreenRecoveryUI::SetInstallStage(',
                       'bool ScreenRecoveryUI::IsDesignMenuLocked() const',
                       'int ScreenRecoveryUI::DrawDashboard(',

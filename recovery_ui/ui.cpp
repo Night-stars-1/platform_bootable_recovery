@@ -581,8 +581,25 @@ void RecoveryUI::EnqueueTouch(const Point& pos) {
   }
 }
 
+void RecoveryUI::SetTouchMoveCoalescing(bool enabled, const Point& minimum, const Point& maximum) {
+  std::lock_guard<std::mutex> lg(event_queue_mutex);
+  coalesce_touch_moves_=enabled;coalescing_gesture_=false;
+  coalesce_touch_min_=minimum;coalesce_touch_max_=maximum;
+}
+
 void RecoveryUI::EnqueueGesture(EventType type, const Point& pos) {
   std::lock_guard<std::mutex> lg(event_queue_mutex);
+  if (type == EventType::TOUCH_DOWN) {
+    coalescing_gesture_=coalesce_touch_moves_ && pos.x()>=coalesce_touch_min_.x() &&
+        pos.x()<coalesce_touch_max_.x() && pos.y()>=coalesce_touch_min_.y() && pos.y()<coalesce_touch_max_.y();
+  }
+  if (type == EventType::TOUCH_UP) coalescing_gesture_=false;
+  if (coalescing_gesture_ && type == EventType::TOUCH_MOVE && event_queue_len > 0 &&
+      event_queue[event_queue_len - 1].type() == EventType::TOUCH_MOVE) {
+    event_queue[event_queue_len - 1] = InputEvent(type, pos);
+    event_queue_cond.notify_one();
+    return;
+  }
   const int queue_max = sizeof(event_queue) / sizeof(event_queue[0]);
   if (event_queue_len == queue_max) {
     // Never silently lose a point or finger-up and submit a different pattern.

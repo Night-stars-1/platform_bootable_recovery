@@ -337,8 +337,12 @@ class RecoveryUI {
   void EnqueueKey(int key_code);
   void EnqueueTouch(const Point& pos);
   void EnqueueGesture(EventType type, const Point& pos);
+  void SetTouchMoveCoalescing(bool enabled, const Point& minimum, const Point& maximum);
   // Credential pages use raw gestures; ordinary menus keep swipe scrolling.
   std::atomic<bool> gesture_input_{false};
+  // Terminal drags need the latest position; pattern entry must retain every point.
+  bool coalesce_touch_moves_=false,coalescing_gesture_=false;
+  Point coalesce_touch_min_,coalesce_touch_max_; // Guarded by event_queue_mutex.
   std::atomic<bool> discard_touch_until_press_{false};
 
   // The normal and dimmed brightness percentages (default: 50 and 25, which means 50% and 25% of
