@@ -61,7 +61,7 @@ inline void Draw(Canvas& c,int width,int height,bool pin,size_t length,bool symb
       field.w-2*pad,pin?"Enter your lock-screen PIN":"Enter your lock-screen password",Font::DesignBody,design::muted);
   for(size_t i=0;i<layout.keys.size();++i) {
     const auto& key=layout.keys[i];auto b=key.bounds;bool unlock=key.action==Action::Unlock;
-    Surface(c,b,Dp(width,8),unlock && length?Color{38,60,50}:design::surface,focus==static_cast<int>(i),design::green,Dp(width,1));
+    Surface(c,b,Dp(width,8),unlock && length?theme::mint:design::surface,focus==static_cast<int>(i),design::green,Dp(width,1));
     std::string label=key.action==Action::Delete?"Del":key.action==Action::Clear?"Clear":key.label;
     if(GetLanguage()==Language::Chinese && key.action==Action::Delete)label="删除";
     else if(GetLanguage()==Language::Chinese && key.action==Action::Clear)label=Tr("Clear input");

@@ -735,7 +735,7 @@ void ScreenRecoveryUI::draw_background_locked() {
     const auto& text_surface = GetCurrentText();
     int text_x = (ScreenWidth() - gr_get_width(text_surface)) / 2;
     int text_y = GetTextBaseline();
-    gr_color(255, 255, 255, 255);
+    M3eSetColor(recovery_m3e::theme::text);
     DrawTextIcon(text_x, text_y, text_surface);
   }
 }
@@ -792,17 +792,17 @@ void ScreenRecoveryUI::draw_foreground_locked() {
   }
 }
 
-// M3E tonal palette; fastbootd has a distinct amber accent.
+// All Recovery pages share the SVG palette, including fastbootd.
 void ScreenRecoveryUI::SetColor(UIElement e) const {
   const auto p = recovery_m3e::Palette::ForMode(fastbootd_logo_enabled_);
   switch (e) {
     case UIElement::BATTERY_LOW: M3eSetColor(p.error); break;
     case UIElement::HEADER: M3eSetColor(p.text); break;
-    case UIElement::INFO:
-    case UIElement::SCROLLBAR: M3eSetColor(p.primary); break;
+    case UIElement::INFO: M3eSetColor(p.text); break;
+    case UIElement::SCROLLBAR: M3eSetColor(p.secondary); break;
     case UIElement::MENU: M3eSetColor(p.text); break;
     case UIElement::MENU_BG: M3eSetColor(p.card); break;
-    case UIElement::MENU_SEL_BG: M3eSetColor(p.primary); break;
+    case UIElement::MENU_SEL_BG: M3eSetColor(p.selected); break;
     case UIElement::MENU_SEL_BG_ACTIVE: M3eSetColor(p.pressed); break;
     case UIElement::MENU_SEL_FG: M3eSetColor(p.on_primary); break;
     case UIElement::LOG: M3eSetColor(p.secondary); break;
@@ -852,7 +852,7 @@ void ScreenRecoveryUI::SelectAndShowBackgroundText(const std::vector<std::string
     text_y += line_spacing;
     SetColor(UIElement::LOG);
     text_y += DrawTextLine(text_x, text_y, p.first, false);
-    gr_color(255, 255, 255, 255);
+    M3eSetColor(recovery_m3e::theme::text);
     gr_texticon(text_x, text_y, p.second.get());
     text_y += gr_get_height(p.second.get());
   }
@@ -1261,7 +1261,7 @@ void ScreenRecoveryUI::draw_screen_locked() {
     return;
   }
   if (IsInstallPageLocked()) {
-    M3eSetColor(IsDesignAdbLocked() ? recovery_m3e::design::background : recovery_m3e::Color{0,0,0});
+    M3eSetColor(recovery_m3e::theme::background);
     gr_clear();
     DrawInstallPageLocked();
     draw_battery_capacity_locked();
@@ -1799,7 +1799,6 @@ void ScreenRecoveryUI::DrawInstallPageLocked() {
   }
   recovery_m3e::Metrics m(ScreenWidth());
   auto palette = recovery_m3e::Palette::ForMode(false);
-  palette.background = {0, 0, 0};
   int top = std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
   int bottom = ScreenHeight() - top;
   int rows = menu_ ? std::min<size_t>(2, menu_->ItemsCount()) : 0;

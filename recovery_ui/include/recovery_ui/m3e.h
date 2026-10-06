@@ -14,6 +14,15 @@
 #include <vector>
 namespace recovery_m3e {
 struct Color { uint8_t r,g,b; };
+// Shared colours from recovery-design-1.svg and fastbootd.svg.
+namespace theme {
+constexpr Color background{15,13,19},surface{36,36,36},text{230,230,230};
+constexpr Color green{0,185,99},muted{174,173,180},track{63,64,68},selected{54,55,59};
+constexpr Color purple{59,49,80},purple_pressed{102,85,127};
+constexpr Color cyan{38,58,64},cyan_pressed{64,94,99};
+constexpr Color mint{38,60,50},mint_pressed{70,100,81};
+constexpr Color red{61,40,43},red_pressed{104,72,79},error{179,38,30};
+}
 // Alerts sit on the solid page background; composite here for identical device/host output.
 inline Color CompositeOver(Color foreground,Color background,uint8_t alpha) {
   auto channel=[alpha](uint8_t front,uint8_t back) {
@@ -39,19 +48,16 @@ class Canvas {
   virtual void TextMask(Rect b,const std::vector<uint8_t>& alpha,Color color) {Mask(b,alpha,color);}
 };
 struct Palette {
-  Color background{18,17,24},surface{30,28,38},card{38,35,47};
-  Color primary{220,202,255},on_primary{45,26,68};
-  Color text{246,241,251},secondary{171,164,184},outline{77,69,92};
-  Color error{245,170,168},error_surface{46,29,34},on_error{66,20,27};
-  Color pressed{227,213,255},mint{202,237,214},on_mint{23,59,40};
-  Color blue{207,222,255},on_blue{29,48,79};
-  Color alert_info{150,194,255},alert_success{151,217,171},alert_warning{255,193,115};
+  Color background=theme::background,surface=theme::surface,card=theme::surface;
+  Color primary=theme::green,on_primary=theme::text;
+  Color text=theme::text,secondary=theme::muted,outline=theme::track;
+  Color error=theme::error,error_surface=theme::red,on_error=theme::red_pressed;
+  Color selected=theme::selected,pressed=theme::track,mint=theme::mint,on_mint=theme::text;
+  Color blue=theme::cyan,on_blue=theme::text;
+  Color hero=theme::purple,hero_pressed=theme::purple_pressed;
+  Color alert_info=theme::cyan_pressed,alert_success=theme::green,alert_warning=theme::purple_pressed;
   uint8_t alert_opacity=24;  // About 9% tint; the page remains visible underneath.
-  static Palette ForMode(bool fastboot) {
-    Palette p;
-    if(fastboot) {p.primary={255,208,153};p.on_primary={71,43,16};}
-    return p;
-  }
+  static Palette ForMode(bool) {return {};}
 };
 struct Metrics {
   int width,char_width,char_height,inset,gap,row_height;
@@ -213,13 +219,13 @@ inline void DrawCard(Canvas& c,const Metrics& m,int y,const std::string& name,
   Rect b=m.Card(y);
   Icon icon=IconFor(name);
   bool danger=icon==Icon::Trash;
-  Color bg=danger?(active?p.on_error:p.error_surface):(active?p.outline:p.card);
-  Color fg=danger?p.error:p.text;
-  Surface(c,b,ListCorners(m,first,last),bg,selected,danger?p.error:p.primary,Dp(m.width,2));
+  Color bg=danger?(active?p.on_error:p.error_surface):(active?p.pressed:p.card);
+  Color fg=p.text;
+  Surface(c,b,ListCorners(m,first,last),bg,selected,p.text,Dp(m.width,2));
   int pad=Dp(m.width,16), size=Dp(m.width,40);
   Rect badge{b.x+pad,b.y+(b.h-size)/2,size,size};
   Rounded(c,badge,Dp(m.width,14),danger?p.error_surface:p.surface);
-  DrawIcon(c,Inset(badge,Dp(m.width,9)),icon,danger?p.error:p.primary);
+  DrawIcon(c,Inset(badge,Dp(m.width,9)),icon,p.text);
   int x=badge.x+badge.w+Dp(m.width,12), available=b.x+b.w-pad-x;
   std::string sub=Subtitle(name);
   if(sub.empty()) {
@@ -258,11 +264,11 @@ inline int DrawDashboard(Canvas& c,const Metrics& m,int y,int available,int sele
   if(!layout.valid) return 0;
   const int pad=Dp(m.width,22),ring=Dp(m.width,2);
   Rect b=layout.cards[0];
-  Surface(c,b,Dp(m.width,30),active && selected==0?p.pressed:p.primary,selected==0,p.text,ring);
+  Surface(c,b,Dp(m.width,30),active && selected==0?p.hero_pressed:p.hero,selected==0,p.text,ring);
   int badge_size=Dp(m.width,40);
   Rect badge{b.x+pad,b.y+pad,badge_size,badge_size};
-  Rounded(c,badge,Dp(m.width,15),p.on_primary);
-  DrawIcon(c,Inset(badge,Dp(m.width,9)),Icon::Download,p.primary);
+  Rounded(c,badge,Dp(m.width,15),p.hero_pressed);
+  DrawIcon(c,Inset(badge,Dp(m.width,9)),Icon::Download,p.text);
   DrawIcon(c,{b.x+b.w-pad-Dp(m.width,22),b.y+pad,Dp(m.width,22),Dp(m.width,22)},Icon::Arrow,p.on_primary);
   Label(c,m,b.x+pad,b.y+b.h-Dp(m.width,68),b.w-2*pad,"Install update",Font::Heading,p.on_primary,true);
   Label(c,m,b.x+pad,b.y+b.h-Dp(m.width,32),b.w-2*pad,"Choose an update method",Font::Body,p.on_primary);
@@ -275,10 +281,10 @@ inline int DrawDashboard(Canvas& c,const Metrics& m,int y,int available,int sele
     Label(c,m,b.x+pad,b.y+b.h-Dp(m.width,32),b.w-2*pad,i==1?"Reboot options":"Recovery preferences",Font::Small,fg);
   }
   b=layout.cards[3];
-  Surface(c,b,Dp(m.width,24),active && selected==3?p.on_error:p.error_surface,selected==3,p.error,ring);
-  DrawIcon(c,{b.x+pad,b.y+(b.h-Dp(m.width,24))/2,Dp(m.width,24),Dp(m.width,24)},Icon::Trash,p.error);
+  Surface(c,b,Dp(m.width,24),active && selected==3?p.on_error:p.error_surface,selected==3,p.text,ring);
+  DrawIcon(c,{b.x+pad,b.y+(b.h-Dp(m.width,24))/2,Dp(m.width,24),Dp(m.width,24)},Icon::Trash,p.text);
   int tx=b.x+pad+Dp(m.width,40);
-  Label(c,m,tx,b.y+Dp(m.width,12),b.x+b.w-pad-tx,"Factory reset",Font::Menu,p.error,true);
+  Label(c,m,tx,b.y+Dp(m.width,12),b.x+b.w-pad-tx,"Factory reset",Font::Menu,p.text,true);
   Label(c,m,tx,b.y+Dp(m.width,39),b.x+b.w-pad-tx,"Review erase options",Font::Small,p.secondary);
   return layout.height;
 }
@@ -314,7 +320,7 @@ inline int DrawHeader(Canvas& c,const Metrics& m,int top,bool back,bool back_sel
   auto b=BackBounds(m,top);
   int brand_x=m.inset;
   if(back) {
-    Surface(c,b,b.h/2,p.surface,back_selected,p.primary,Dp(m.width,2));
+    Surface(c,b,b.h/2,p.surface,back_selected,p.text,Dp(m.width,2));
     DrawIcon(c,Inset(b,Dp(m.width,14)),Icon::Back,p.text);
     brand_x+=b.w+Dp(m.width,12);
   }
@@ -431,7 +437,7 @@ inline void DrawFooter(Canvas& c,const Metrics& m,int y,int bottom,const std::ve
     Rect box{m.inset,box_bottom-needed,m.width-2*m.inset,needed};
     Rounded(c,box,Dp(m.width,20),p.surface);
     int x=box.x+Dp(m.width,16),ty=box.y+Dp(m.width,10);
-    Label(c,m,x,ty,box.w-Dp(m.width,32),"RECENT OUTPUT",Font::Small,p.primary,true);
+    Label(c,m,x,ty,box.w-Dp(m.width,32),"RECENT OUTPUT",Font::Small,p.text,true);
     ty+=lh+Dp(m.width,4);
     size_t start=logs.size()>2?logs.size()-2:0;
     for(size_t i=start;i<logs.size();++i) {

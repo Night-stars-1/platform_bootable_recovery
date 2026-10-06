@@ -26,7 +26,7 @@ inline int DrawInstallHeader(Canvas& c,const Metrics& m,int top,int bottom,int m
   // stays identical to the regular header used by ScreenRecoveryUI::SelectMenu.
   auto back=BackBounds(m,top);int x=m.inset;
   if(menu_rows>0) {
-    Surface(c,back,back.h/2,p.surface,back_selected,p.primary,Dp(m.width,2));
+    Surface(c,back,back.h/2,p.surface,back_selected,p.text,Dp(m.width,2));
     DrawIcon(c,Inset(back,Dp(m.width,14)),Icon::Back,p.text);
     x+=back.w+Dp(m.width,12);
   }
@@ -105,9 +105,9 @@ inline void DrawInstallPanel(Canvas& c,const Metrics& m,Rect panel,InstallStage 
   int percent_width=percent.empty()?0:TextWidth(percent,FontPixels(Font::Small,m.width),true);
   if(y+title_height<=bottom) {
     Label(c,m,x,y,width-(percent.empty()?0:percent_width+Dp(m.width,12)),
-          InstallTitle(stage,security_update),Font::Menu,accent,true);
+          InstallTitle(stage,security_update),Font::Menu,p.text,true);
     if(!percent.empty()) c.Text(x+width-percent_width,y+(title_height-LineHeight(FontPixels(Font::Small,m.width)))/2,
-                               percent,Font::Small,accent,true);
+                               percent,Font::Small,p.text,true);
     y+=title_height+Dp(m.width,compact?6:10);
   }
   if((progress_stage || complete) && y+Dp(m.width,8)<=bottom) {
@@ -119,7 +119,7 @@ inline void DrawInstallPanel(Canvas& c,const Metrics& m,Rect panel,InstallStage 
   }
   int body_height=LineHeight(FontPixels(Font::Body,m.width));
   if(stage==InstallStage::WAITING && y+body_height<=bottom) {
-    Label(c,m,x,y,width,"adb sideload <filename>",Font::Body,p.blue,true);
+    Label(c,m,x,y,width,"adb sideload <filename>",Font::Body,p.text,true);
     y+=body_height+Dp(m.width,8);
   }
   auto hint=WrapText(Tr(InstallHint(stage)),width,FontPixels(Font::Body,m.width));

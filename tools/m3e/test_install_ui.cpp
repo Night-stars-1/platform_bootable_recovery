@@ -92,7 +92,7 @@ const char* names[]={"waiting","verifying","installing","success","error","cance
 
 void Render(const std::string& out,int w,int h,bool zh,int index,bool pixels=false) {
   SetScaleBasis(w,h);SetLanguage(zh?Language::Chinese:Language::English);
-  PixelCanvas c(w,h,pixels);Metrics m(w);auto p=Palette::ForMode(false);p.background={0,0,0};
+  PixelCanvas c(w,h,pixels);Metrics m(w);auto p=Palette::ForMode(false);
   auto stage=stages[index];int rows=stage==InstallStage::WAITING?1:index>=3?2:0;
   int top=Dp(w,24),bottom=h-top;
   int y=DrawInstallHeader(c,m,top,bottom,rows,false,{},p);

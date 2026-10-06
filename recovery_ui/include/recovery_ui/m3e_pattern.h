@@ -81,8 +81,8 @@ inline void TracePattern(recovery_ui::PatternInput& input, const PatternLayout& 
 }
 inline void PatternButton(Canvas& c, const Metrics& m, Rect b, const char* label,
                           bool primary, bool enabled, bool focused, const Palette& p) {
-  Color bg = primary && enabled ? p.primary : p.surface;
-  Surface(c, b, b.h / 2, bg, focused, p.primary, Dp(m.width, 2));
+  Color bg = primary && enabled ? p.mint : p.surface;
+  Surface(c, b, b.h / 2, bg, focused, p.text, Dp(m.width, 2));
   int pixels = FontPixels(Font::Menu, m.width);
   auto text = FitText(Tr(label), b.w - Dp(m.width, 16), pixels, true);
   c.Text(b.x + (b.w - TextWidth(text, pixels, true)) / 2,
@@ -108,7 +108,7 @@ inline void DrawPattern(Canvas& c, const Metrics& m, const PatternLayout& l,
     bool selected = input.Contains(cell);
     int r = std::min(l.radius, Dp(m.width, selected ? 19 : 7));
     if (focus == cell) Surface(c, {x - l.radius, y - l.radius, 2 * l.radius, 2 * l.radius},
-                              l.radius, p.card, true, p.primary, Dp(m.width, 2));
+                              l.radius, p.card, true, p.text, Dp(m.width, 2));
     if (selected) {
       Rounded(c, {x - r, y - r, 2 * r, 2 * r}, r, p.outline);
       r = std::min(r, Dp(m.width, 9));

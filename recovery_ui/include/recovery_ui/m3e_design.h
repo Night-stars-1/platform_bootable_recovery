@@ -20,8 +20,8 @@ inline bool AdbPage(bool adb,recovery_ui::InstallStage stage) {
   return adb && (stage==recovery_ui::InstallStage::WAITING ||
                  stage==recovery_ui::InstallStage::INSTALLING);
 }
-constexpr Color background{15,13,19},surface{36,36,36},text{230,230,230};
-constexpr Color green{0,185,99},muted{174,173,180},track{63,64,68};
+constexpr Color background=theme::background,surface=theme::surface,text=theme::text;
+constexpr Color green=theme::green,muted=theme::muted,track=theme::track;
 inline Metrics LayoutMetrics(int width) {
   Metrics m(width);m.inset=Dp(width,18);m.row_height=Dp(width,63);m.gap=Dp(width,5);return m;
 }
@@ -173,8 +173,8 @@ inline int HitHome(int width,int available,int x,int y) {
 inline int Dashboard(Canvas& c,int width,int top,int available,int selected,bool active) {
   auto layout=Home(width,top,available);if(!layout.valid)return 0;
   Metrics m(width);int pad=Dp(width,24),ring=Dp(width,1);
-  const Color colors[]={{59,49,80},{38,58,64},{38,58,64},{38,60,50},{61,40,43}};
-  const Color arrows[]={{102,85,127},{64,94,99},{64,94,99},{70,100,81},{104,72,79}};
+  const Color colors[]={theme::purple,theme::cyan,theme::cyan,theme::mint,theme::red};
+  const Color arrows[]={theme::purple_pressed,theme::cyan_pressed,theme::cyan_pressed,theme::mint_pressed,theme::red_pressed};
   const char* labels[]={"Install or update","Terminal","","Power","Reset"};
   for(int i=0;i<5;++i) {
     auto b=layout.buttons[i];Color bg=active && selected==i?arrows[i]:colors[i];
