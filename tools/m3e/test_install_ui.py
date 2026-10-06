@@ -223,13 +223,21 @@ def compile_android(clang, build):
 unsigned int gr_get_width(const GRSurface*);
 unsigned int gr_get_height(const GRSurface*);
 void gr_clear();
-class M3eCanvas : public recovery_m3e::Canvas {
+int gr_fb_width();
+int gr_fb_height();
+void gr_color(unsigned char,unsigned char,unsigned char,unsigned char);
+void gr_fill(int,int,int,int);
+void gr_texticon(int,int,const GRSurface*);
+// Compile the actual canvas against minui API declarations; no display backend is linked.
+class GRSurface {
  public:
-  void Fill(recovery_m3e::Rect,recovery_m3e::Color) override {}
-  void Text(int,int,const std::string&,recovery_m3e::Font,recovery_m3e::Color,bool) override {}
+  static std::unique_ptr<GRSurface> Create(size_t,size_t,size_t,size_t);
+  uint8_t* data();
+  size_t row_bytes;
 };
 static void M3eSetColor(recovery_m3e::Color) {}
 '''
+    unit += function(source, 'class M3eCanvas :') + ';\n'
     for signature in ('void ScreenRecoveryUI::SetInstallStage(',
                       'bool ScreenRecoveryUI::IsDesignMenuLocked() const',
                       'int ScreenRecoveryUI::DrawDashboard(',
@@ -255,7 +263,7 @@ static void M3eSetColor(recovery_m3e::Color) {}
     subprocess.run(flags + [str(path), '-o', str(build / 'android-install-ui.o')], check=True)
     subprocess.run(flags + [str(ROOT / 'tools/m3e/test_install_ui.cpp'), '-o',
                             str(build / 'android-install-renderer.o')], check=True)
-    print('PASS: Android arm64 object compilation; real UI class headers, substitute minui canvas')
+    print('PASS: Android arm64 object compilation; real UI class headers and canvas, minui API declarations')
 
 
 def run(cxx, out, ndk_clang=None):

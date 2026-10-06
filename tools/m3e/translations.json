@@ -192,5 +192,16 @@
   "Target: vbmeta_system_b": "目标分区：vbmeta_system_b",
   "Current slot: _a": "当前槽位：A",
   "Current slot: _b": "当前槽位：B",
-  "Current slot: none": "当前设备没有槽位信息"
+  "Current slot: none": "当前设备没有槽位信息",
+  "Install or update": "安装更新",
+  "Terminal": "终端",
+  "Power": "电源",
+  "Reset": "重置",
+  "Reboot to...": "重启至…",
+  "Install or update by...": "选择安装方式",
+  "On your computer, run below command to send package:": "在电脑上运行以下命令发送安装包：",
+  "Status": "状态",
+  "Waiting for package...": "等待安装包…",
+  "Installing package:": "正在安装：",
+  "Logs": "日志"
 }

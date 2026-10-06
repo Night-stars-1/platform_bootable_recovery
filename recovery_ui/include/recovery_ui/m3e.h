@@ -31,6 +31,11 @@ class Canvas {
   virtual ~Canvas()=default;
   virtual void Fill(Rect,Color)=0;
   virtual void Text(int,int,const std::string&,Font,Color,bool)=0;
+  // Alpha glyph masks share the same raster on the device and host preview.
+  virtual void Mask(Rect b,const std::vector<uint8_t>& alpha,Color color) {
+    for(int y=0;y<b.h;++y)for(int x=0;x<b.w;++x)
+      if(alpha[y*b.w+x]>=128)Fill({b.x+x,b.y+y,1,1},color);
+  }
 };
 struct Palette {
   Color background{18,17,24},surface{30,28,38},card{38,35,47};
@@ -183,7 +188,7 @@ inline void Surface(Canvas& c,Rect b,int radius,Color bg,bool selected,Color rin
 }
 inline void Label(Canvas& c,const Metrics& m,int x,int y,int width,const std::string& text,
                   Font f,Color color,bool bold=false) {
-  c.Text(x,y,FitText(Tr(text),width,FontPixels(f,m.width),bold,Monospace(f)),f,color,bold);
+  c.Text(x,y,FitText(Tr(text),width,FontPixels(f,m.width),bold,Monospace(f),FaceFor(f)),f,color,bold);
 }
 inline std::string Subtitle(const std::string& name) {
   if(name=="Language") return "Choose your recovery language";

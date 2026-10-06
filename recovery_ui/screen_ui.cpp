@@ -76,16 +76,20 @@ class M3eCanvas : public recovery_m3e::Canvas {
             recovery_m3e::Color color, bool bold) override {
     if (text.empty()) return;
     auto bitmap = recovery_m3e::RasterText(text, recovery_m3e::FontPixels(kind, gr_fb_width()), bold,
-        recovery_m3e::Monospace(kind));
-    int left = std::max(0, x), top = std::max(0, y);
-    int width = std::min(gr_fb_width(), x + bitmap.width) - left;
-    int height = std::min(gr_fb_height(), y + bitmap.height) - top;
+        recovery_m3e::Monospace(kind), recovery_m3e::FaceFor(kind));
+    Mask({x, y, bitmap.width, bitmap.height}, bitmap.alpha, color);
+  }
+  void Mask(recovery_m3e::Rect b, const std::vector<uint8_t>& alpha,
+            recovery_m3e::Color color) override {
+    int left = std::max(0, b.x), top = std::max(0, b.y);
+    int width = std::min(gr_fb_width(), b.x + b.w) - left;
+    int height = std::min(gr_fb_height(), b.y + b.h) - top;
     if (width <= 0 || height <= 0) return;
     auto surface = GRSurface::Create(width, height, width, 1);
     if (!surface) return;
     for (int row = 0; row < height; ++row) {
       memcpy(surface->data() + row * surface->row_bytes,
-             bitmap.alpha.data() + (top - y + row) * bitmap.width + left - x, width);
+             alpha.data() + (top - b.y + row) * b.w + left - b.x, width);
     }
     gr_color(color.r, color.g, color.b, 255);
     gr_texticon(left, top, surface.get());

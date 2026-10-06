@@ -30,14 +30,20 @@ struct PixelCanvas : Canvas {
   }
   void Text(int x,int y,const std::string& s,Font f,Color c,bool bold) override {
     if(s.empty()) return;
-    Rect b{x,y,TextWidth(s,FontPixels(f,width),bold,Monospace(f)),LineHeight(FontPixels(f,width))};
+    Rect b{x,y,TextWidth(s,FontPixels(f,width),bold,Monospace(f),FaceFor(f)),FontLineHeight(f,width)};
     assert(x>=0 && y>=0 && x+b.w<=width && y+b.h<=height);
     runs.push_back({b,s,c});
     if(!pixels) return;
-    auto raster=RasterText(s,FontPixels(f,width),bold,Monospace(f));
-    for(int sy=0;sy<raster.height;++sy)for(int sx=0;sx<raster.width;++sx) {
-      int dx=x+sx,dy=y+sy;if(dx<0||dy<0||dx>=width||dy>=height) continue;
-      int a=raster.alpha[sy*raster.width+sx];size_t i=(dy*width+dx)*3;
+    auto raster=RasterText(s,FontPixels(f,width),bold,Monospace(f),FaceFor(f));
+    Mask({x,y,raster.width,raster.height},raster.alpha,c);
+  }
+  void Mask(Rect b,const std::vector<uint8_t>& alpha,Color c) override {
+    assert(b.x>=0 && b.y>=0 && b.w>=0 && b.h>=0 && b.x+b.w<=width && b.y+b.h<=height);
+    assert(alpha.size()==static_cast<size_t>(b.w*b.h));
+    if(!pixels)return;
+    for(int sy=0;sy<b.h;++sy)for(int sx=0;sx<b.w;++sx) {
+      int dx=b.x+sx,dy=b.y+sy;if(dx<0||dy<0||dx>=width||dy>=height)continue;
+      int a=alpha[sy*b.w+sx];size_t i=(dy*width+dx)*3;
       rgb[i]=(rgb[i]*(255-a)+c.r*a+127)/255;
       rgb[i+1]=(rgb[i+1]*(255-a)+c.g*a+127)/255;
       rgb[i+2]=(rgb[i+2]*(255-a)+c.b*a+127)/255;
@@ -192,6 +198,7 @@ void RenderDesign(const std::string& out,int w,int h,bool zh,int page,bool pixel
     design::Header(c,w,h,kind);int top=design::MenuTop(w,h,kind),available=design::FooterTop(w,h)-Dp(w,10)-top;
     if(page==0 && design::Home(w,top,available).valid) {
       design::Dashboard(c,w,top,available,-1,false);
+      for(const char* label:{"Install or update","Terminal","Power","Reset"})assert(c.Has(Tr(label)));
       for(int i=0;i<5;++i) {
         auto b=design::Home(w,0,available).buttons[i];assert(design::HitHome(w,available,b.x+b.w/2,b.y+b.h/2)==i);
       }
@@ -214,6 +221,11 @@ void RenderDesign(const std::string& out,int w,int h,bool zh,int page,bool pixel
     design::Footer(c,w,h,details);
   }
   if(page!=5)design::Battery(c,w,82,false);
+  // Check the font selection as part of the complete bilingual page flow.
+  assert(FaceFor(Font::DesignBrand)==Face::Outfit && FaceFor(Font::DesignRecoveryTitle)==Face::Flex);
+  assert(FaceFor(Font::Code)==Face::Code && FaceFor(Font::DesignMenu)==Face::Flex);
+  assert(TextWidth("iiii",FontPixels(Font::Code,w),false,true)==TextWidth("WWWW",FontPixels(Font::Code,w),false,true));
+  assert(design::text.r==230 && design::text.g==230 && design::text.b==230);
   if(pixels)c.Write(out+"/design-"+std::to_string(page)+(zh?"-zh.ppm":"-en.ppm"));
 }
 int main(int argc,char** argv) {

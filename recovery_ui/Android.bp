@@ -22,15 +22,26 @@ package {
     default_applicable_licenses: ["bootable_recovery_license"],
 }
 
-// The M3E Google Sans and Noto Sans SC glyph data is distributed under the SIL Open Font License.
+// The UI text fonts and Noto Sans SC glyph data use the SIL Open Font License.
 license {
     name: "recovery_m3e_font_license",
+        "recovery_m3e_symbols_license",
     visibility: [":__subpackages__"],
     license_kinds: ["SPDX-license-identifier-OFL"],
     license_text: [
         "m3e-font-OFL.txt",
         "m3e-cjk-OFL.txt",
+        "m3e-GoogleSansFlex-OFL.txt",
+        "m3e-GoogleSansCode-OFL.txt",
+        "m3e-Outfit-OFL.txt",
     ],
+}
+
+license {
+    name: "recovery_m3e_symbols_license",
+    visibility: [":__subpackages__"],
+    license_kinds: ["SPDX-license-identifier-Apache-2.0"],
+    license_text: ["m3e-symbols-LICENSE.txt"],
 }
 
 cc_library {
@@ -38,6 +49,7 @@ cc_library {
     licenses: [
         "bootable_recovery_license",
         "recovery_m3e_font_license",
+        "recovery_m3e_symbols_license",
     ],
     recovery_available: true,
 

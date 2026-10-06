@@ -19,7 +19,7 @@ inline bool AdbPage(bool adb,recovery_ui::InstallStage stage) {
   return adb && (stage==recovery_ui::InstallStage::WAITING ||
                  stage==recovery_ui::InstallStage::INSTALLING);
 }
-constexpr Color background{15,13,19},surface{36,36,36},text{255,255,255};
+constexpr Color background{15,13,19},surface{36,36,36},text{230,230,230};
 constexpr Color green{0,185,99},muted{174,173,180},track{63,64,68};
 inline Metrics LayoutMetrics(int width) {
   Metrics m(width);m.inset=Dp(width,18);m.row_height=Dp(width,63);m.gap=Dp(width,5);return m;
@@ -30,71 +30,46 @@ inline int TitleTop(int width,int height) {return Dp(width,height<Dp(width,600)?
 inline int MenuTop(int width,int height,Page page) {
   return TitleTop(width,height)+Dp(width,page==Page::Home?71:39);
 }
-inline void Chevron(Canvas& c,Rect b,Color color=text) {
-  int stroke=std::max(1,b.w/9);
-  Line(c,b.x+b.w/3,b.y+b.h/4,b.x+2*b.w/3,b.y+b.h/2,stroke,color);
-  Line(c,b.x+2*b.w/3,b.y+b.h/2,b.x+b.w/3,b.y+3*b.h/4,stroke,color);
-}
-enum class Glyph { Android, Chip, Refresh, Gear, Terminal, Storage, Warning, Phone };
-inline void Symbol(Canvas& c,Rect b,Glyph glyph,Color color=text) {
-  int stroke=std::max(1,b.w/12);
-  auto line=[&](int x1,int y1,int x2,int y2) {
-    Line(c,b.x+x1*b.w/24,b.y+y1*b.h/24,b.x+x2*b.w/24,b.y+y2*b.h/24,stroke,color);
-  };
-  if(glyph==Glyph::Terminal) {
-    line(2,2,22,2);line(22,2,22,22);line(22,22,2,22);line(2,22,2,2);
-    line(5,6,11,12);line(11,12,5,18);line(13,18,19,18);
-  } else if(glyph==Glyph::Phone) {
-    line(6,2,18,2);line(18,2,18,22);line(18,22,6,22);line(6,22,6,2);
-    line(12,7,12,17);line(8,13,12,17);line(16,13,12,17);
-  } else if(glyph==Glyph::Android) {
-    line(6,3,9,7);line(18,3,15,7);
-    Rounded(c,{b.x+b.w/6,b.y+b.h/3,2*b.w/3,b.h/2},b.w/5,color);
-    c.Fill({b.x+b.w/6,b.y+7*b.h/12,2*b.w/3,b.h/4},color);
-    Rounded(c,{b.x+b.w/3,b.y+b.h/2,b.w/12,b.w/12},b.w/24,background);
-    Rounded(c,{b.x+7*b.w/12,b.y+b.h/2,b.w/12,b.w/12},b.w/24,background);
-  } else if(glyph==Glyph::Chip || glyph==Glyph::Storage) {
-    line(6,6,18,6);line(18,6,18,18);line(18,18,6,18);line(6,18,6,6);
-    for(int a:{9,15}) {line(a,2,a,6);line(a,18,a,22);line(2,a,6,a);line(18,a,22,a);}
-    if(glyph==Glyph::Chip) Rounded(c,Inset(b,b.w/3),b.w/16,color);
-  } else if(glyph==Glyph::Warning) {
-    line(12,3,2,21);line(2,21,22,21);line(22,21,12,3);line(12,8,12,14);line(12,17,12,18);
-  } else if(glyph==Glyph::Refresh) {
-    for(int a=35;a<330;a+=5) {
-      double r=a*3.141592653589793/180,r2=(a+5)*3.141592653589793/180;
-      Line(c,b.x+b.w/2+std::lround(b.w/3.0*std::sin(r)),b.y+b.h/2-std::lround(b.h/3.0*std::cos(r)),
-        b.x+b.w/2+std::lround(b.w/3.0*std::sin(r2)),b.y+b.h/2-std::lround(b.h/3.0*std::cos(r2)),stroke,color);
-    }
-    line(16,2,17,8);line(17,8,22,6);
-  } else {
-    for(int a=0;a<360;a+=45) {
-      double r=a*3.141592653589793/180;
-      line(12+static_cast<int>(7*std::sin(r)),12+static_cast<int>(7*std::cos(r)),
-           12+static_cast<int>(10*std::sin(r)),12+static_cast<int>(10*std::cos(r)));
-    }
-    for(int a=0;a<360;a+=10) {
-      double r=a*3.141592653589793/180,r2=(a+10)*3.141592653589793/180;
-      line(12+static_cast<int>(6*std::sin(r)),12+static_cast<int>(6*std::cos(r)),
-           12+static_cast<int>(6*std::sin(r2)),12+static_cast<int>(6*std::cos(r2)));
-    }
-    Rounded(c,Inset(b,5*b.w/12),b.w/12,color);
+using Glyph=fontdata::Symbol;
+inline void Symbol(Canvas& c,Rect b,Glyph glyph,Color color=text,bool filled=false) {
+  const auto& g=filled?fontdata::kSymbolsBold[static_cast<int>(glyph)]:fontdata::kSymbolsRegular[static_cast<int>(glyph)];
+  static const auto masks=[] {
+    constexpr int count=sizeof(fontdata::kSymbolsRegular)/sizeof(fontdata::Glyph);
+    std::array<std::vector<uint8_t>,count*2> result;
+    for(int style=0;style<2;++style)for(int index=0;index<count;++index)
+      result[style*count+index]=DecodeGlyph(style?fontdata::kSymbolsBold[index]:fontdata::kSymbolsRegular[index],
+          style?fontdata::kSymbolsBoldData:fontdata::kSymbolsRegularData);
+    return result;
+  }();
+  const auto& mask=masks[(filled?sizeof(fontdata::kSymbolsRegular)/sizeof(fontdata::Glyph):0)+static_cast<int>(glyph)];
+  std::vector<uint8_t> alpha(std::max(0,b.w*b.h));
+  double scale=double(std::min(b.w,b.h))/fontdata::kSize;
+  if(scale<=0)return;
+  double left=(b.w-g.w*scale)/2,top=(b.h-g.h*scale)/2;
+  auto sample=[&](int x,int y)->double {return x<0 || y<0 || x>=g.w || y>=g.h?0:mask[y*g.w+x];};
+  for(int y=0;y<b.h;++y)for(int x=0;x<b.w;++x) {
+    double sx=(x+0.5-left)/scale-0.5,sy=(y+0.5-top)/scale-0.5;
+    int ix=std::floor(sx),iy=std::floor(sy);double ax=sx-ix,ay=sy-iy;
+    double value=(sample(ix,iy)*(1-ax)+sample(ix+1,iy)*ax)*(1-ay)+
+      (sample(ix,iy+1)*(1-ax)+sample(ix+1,iy+1)*ax)*ay;
+    alpha[y*b.w+x]=static_cast<uint8_t>(std::clamp(std::lround(value),0L,255L));
   }
+  c.Mask(b,alpha,color);
 }
+inline void Chevron(Canvas& c,Rect b,Color color=text) {Symbol(c,b,Glyph::Chevron,color);}
 inline void Battery(Canvas& c,int width,int capacity,bool charging) {
   Metrics m(width);int h=Dp(width,28),pad=Dp(width,9),icon=Dp(width,18);
   std::string value=capacity>=0 && capacity<=100?std::to_string(capacity)+"%":"--%";
   if(charging) value+="+";
-  int tw=TextWidth(value,FontPixels(Font::Small,width),false),bw=tw+3*pad+icon;
+  int tw=TextWidth(value,FontPixels(Font::DesignSmall,width),false,false,Face::Flex),bw=tw+3*pad+icon;
   Rect box{width-Dp(width,32)-bw,Dp(width,32),bw,h};
   Rounded(c,box,h/2,surface);
-  c.Text(box.x+pad,box.y+(h-LineHeight(FontPixels(Font::Small,width)))/2,value,Font::Small,text,false);
-  Rect cell{box.x+bw-pad-icon,box.y+Dp(width,9),icon,Dp(width,11)};
-  Rounded(c,cell,Dp(width,2),text);
-  c.Fill({cell.x+cell.w+Dp(width,1),cell.y+cell.h/3,Dp(width,1),std::max(1,cell.h/3)},text);
-  c.Fill({cell.x+cell.w-Dp(width,4),cell.y+Dp(width,1),Dp(width,3),cell.h-Dp(width,2)},surface);
+  c.Text(box.x+pad,box.y+(h-FontLineHeight(Font::DesignSmall,width))/2,value,Font::DesignSmall,text,false);
+  Rect cell{box.x+bw-pad-icon,box.y+(h-icon)/2,icon,icon};
+  Symbol(c,cell,capacity<25?Glyph::BatteryEmpty:capacity<65?Glyph::BatteryHalf:Glyph::BatteryFull,text,true);
 }
 inline void Footer(Canvas& c,int width,int height,const std::vector<std::string>& details) {
-  Metrics m(width);int y=FooterTop(width,height),pad=Dp(width,24),lh=LineHeight(FontPixels(Font::Code,width));
+  Metrics m(width);int y=FooterTop(width,height),pad=Dp(width,24),lh=FontLineHeight(Font::Code,width);
   Rounded(c,{Dp(width,4),y,width-2*Dp(width,4),height-y},CornerRadii{Dp(width,17),Dp(width,5)},surface);
   auto info=ReadDeviceInfo(details);
   auto date=info.version.find(" (");if(date!=std::string::npos)info.version.resize(date);
@@ -110,7 +85,7 @@ inline void Header(Canvas& c,int width,int height,Page page,bool back_selected=f
   Metrics m(width);
   if(page!=Page::Home) {
     auto b=Back(width);Surface(c,b,b.h/2,surface,back_selected,text,Dp(width,1));
-    DrawIcon(c,Inset(b,Dp(width,9)),Icon::Back,text);
+    Symbol(c,Inset(b,Dp(width,7)),Glyph::Back);
   }
   int y=TitleTop(width,height);
   if(page==Page::Home) {
@@ -118,10 +93,10 @@ inline void Header(Canvas& c,int width,int height,Page page,bool back_selected=f
     for(size_t i=0;i<brand.size();++i) {
       std::string letter=brand.substr(i,1);
       c.Text(x,y,letter,Font::DesignBrand,{static_cast<uint8_t>(147+i*5),static_cast<uint8_t>(232-i*4),255},true);
-      x+=TextWidth(letter,FontPixels(Font::DesignBrand,width),true);
+      x+=TextWidth(letter,FontPixels(Font::DesignBrand,width),true, false, FaceFor(Font::DesignBrand));
     }
     x+=Dp(width,6);
-    Label(c,m,x,y,width-x-Dp(width,20),"Recovery",Font::DesignBrand,text,true);
+    Label(c,m,x,y,width-x-Dp(width,20),"Recovery",Font::DesignRecoveryTitle,text,true);
   } else {
     std::string title=override_title.empty()?(page==Page::Reboot?"Reboot to...":"Install or update by..."):override_title;
     if(GetLanguage()==Language::Chinese && override_title.empty())title=Tr(page==Page::Reboot?"Reboot options":"Install update");
@@ -156,14 +131,14 @@ inline int Dashboard(Canvas& c,int width,int top,int available,int selected,bool
     if(i==1)Symbol(c,ib,Glyph::Terminal);
     else if(i==3)Symbol(c,ib,Glyph::Refresh);
     else if(i==0)Symbol(c,ib,Glyph::Phone);
-    else DrawIcon(c,ib,Icon::Trash,text);
+    else Symbol(c,ib,Glyph::Trash);
     int circle=Dp(width,27);
     Rect cb{b.x+b.w-Dp(width,i>=3?17:19)-circle,b.y+(i<=1?(b.h-circle)/2:b.h-Dp(width,53)),circle,circle};
     Rounded(c,cb,circle/2,arrows[i]);Chevron(c,Inset(cb,Dp(width,7)));
     int tx=b.x+pad+(i==0?Dp(width,46):i==1?Dp(width,42):0);
-    int ty=i<=1?b.y+(b.h-LineHeight(FontPixels(Font::DesignTitle,width)))/2:b.y+b.h-Dp(width,53);
+    int ty=i<=1?b.y+(b.h-FontLineHeight(Font::DesignTitle,width))/2:b.y+b.h-Dp(width,53);
     std::string label=labels[i];
-    if(GetLanguage()==Language::Chinese)label=Tr(i==0?"Install update":i==3?"Reboot options":i==4?"Factory reset":labels[i]);
+    if(GetLanguage()==Language::Chinese)label=Tr(i==0?"Install update":i==3?"Power":i==4?"Reset":labels[i]);
     Label(c,m,tx,ty,cb.x-tx-Dp(width,4),label,Font::DesignTitle,text);
   }
   return layout.height;
@@ -182,19 +157,21 @@ inline void Card(Canvas& c,int width,int y,const std::string& name,bool selected
   else if(name=="Reboot to recovery") {glyph=Glyph::Refresh;label="Recovery";}
   else if(name=="Apply from ADB") {glyph=Glyph::Android;color=green;label="adb sideload";arrow=true;}
   else if(name=="Choose ZIP from internal storage") {label="package from local storage";arrow=true;}
-  else if(name=="Power off")DrawIcon(c,{ix,iy,icon,icon},Icon::Power,text);
+  else if(name=="Power off")Symbol(c,{ix,iy,icon,icon},Glyph::Power);
   else arrow=true;
   if(name!="Power off")Symbol(c,{ix,iy,icon,icon},glyph,color);
-  if(GetLanguage()==Language::Chinese)label=Tr(name);
+  if(GetLanguage()==Language::Chinese) {
+    label=name.rfind("Choose from ",0)==0?"从"+name.substr(12)+"安装":Tr(name);
+  }
   int right=b.x+b.w-pad;
   if(arrow) {
     int circle=Dp(width,24);Rect cb{right-circle,b.y+(b.h-circle)/2,circle,circle};
     Rounded(c,cb,circle/2,{54,55,59});Chevron(c,Inset(cb,Dp(width,7)));right=cb.x-Dp(width,12);
   }
   int tx=ix+icon+Dp(width,20);
-    Font font=label=="package from local storage"?Font::Source:Font::Menu;
-    c.Text(tx,b.y+(b.h-LineHeight(FontPixels(font,width)))/2,
-    FitText(label,right-tx,FontPixels(font,width),false),font,text,false);
+    Font font=label=="package from local storage"?Font::Source:Font::DesignMenu;
+    c.Text(tx,b.y+(b.h-FontLineHeight(font,width))/2,
+    FitText(label,right-tx,FontPixels(font,width),false,false,FaceFor(font)),font,text,false);
 }
 inline int HitList(int width,Page page,int count,int first,int total,int x,int y) {
   auto m=LayoutMetrics(width);int top=0;
@@ -215,33 +192,33 @@ inline void Adb(Canvas& c,int width,int height,bool waiting,double fraction,bool
   int inset=Dp(width,18),w=width-2*inset,y=MenuTop(width,height,Page::Sources);
   Label(c,m,inset,y,w,"On your computer, run below command to send package:",Font::Instruction,text);
   y+=Dp(width,16);Label(c,m,inset,y,w,"adb sideload <filename>",Font::Command,text,true);
-  y+=Dp(width,26);Label(c,m,inset,y,w,"Status",Font::Body,text);y+=Dp(width,20);
+  y+=Dp(width,26);Label(c,m,inset,y,w,"Status",Font::DesignBody,text);y+=Dp(width,20);
   int bottom=FooterTop(width,height)-Dp(width,10),available=bottom-y;
   int panel_h=std::min(Dp(width,121),std::max(Dp(width,53),available/2));
   Rect panel{inset,y,w,panel_h};Rounded(c,panel,Dp(width,17),surface);
   if(waiting) {
-    auto label=FitText(Tr("Waiting for package..."),w-Dp(width,42),FontPixels(Font::Menu,width),false);
-    c.Text(inset+(w-TextWidth(label,FontPixels(Font::Menu,width),false))/2,
-      y+(panel_h-LineHeight(FontPixels(Font::Menu,width)))/2,label,Font::Menu,text,false);
+    auto label=FitText(Tr("Waiting for package..."),w-Dp(width,42),FontPixels(Font::DesignMenu,width),false,false,Face::Flex);
+    c.Text(inset+(w-TextWidth(label,FontPixels(Font::DesignMenu,width),false,false,Face::Flex))/2,
+      y+(panel_h-FontLineHeight(Font::DesignMenu,width))/2,label,Font::DesignMenu,text,false);
   } else {
     double value=std::isfinite(fraction)?std::clamp(fraction,0.0,1.0):0;
     int pad=Dp(width,21),ty=y+Dp(width,12);
-    Label(c,m,inset+pad,ty,w-2*pad,"Installing package:",panel_h>=Dp(width,100)?Font::Menu:Font::Code,text);
+    Label(c,m,inset+pad,ty,w-2*pad,"Installing package:",panel_h>=Dp(width,100)?Font::DesignMenu:Font::Code,text);
     if(panel_h>=Dp(width,100)) {
       // ADB's protocol supplies /sideload/package.zip, not the host's original filename.
       Label(c,m,inset+pad,ty+Dp(width,24),w-2*pad,"package.zip",Font::Code,text,true);
     }
     int percent_y=panel.y+panel.h-Dp(width,51);
     Label(c,m,inset+pad,percent_y,w-2*pad,determinate?std::to_string(static_cast<int>(value*100))+"%":"...",
-      Font::Heading,text);
+      Font::DesignHeading,text);
     Rect bar{inset+pad,panel.y+panel.h-Dp(width,22),w-2*pad,Dp(width,12)};
     Rounded(c,bar,bar.h/2,track);
     if(determinate && value>0)Rounded(c,{bar.x,bar.y,std::max(1,static_cast<int>(bar.w*value)),bar.h},bar.h/2,green);
   }
   y+=panel_h+Dp(width,17);
-  int lh=LineHeight(FontPixels(Font::Caption,width));
+  int lh=FontLineHeight(Font::Caption,width);
   if(bottom-y>=lh+Dp(width,29)) {
-    Label(c,m,inset,y,w,"Logs",Font::Body,text);y+=Dp(width,20);
+    Label(c,m,inset,y,w,"Logs",Font::DesignBody,text);y+=Dp(width,20);
     Rect box{inset,y,w,bottom-y};Rounded(c,box,Dp(width,17),surface);
     int pad=Dp(width,21),ty=y+Dp(width,12);
     std::vector<std::string> rows;

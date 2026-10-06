@@ -6,10 +6,13 @@ The pinned source font is not needed on the cloud build server or the device.
 Writes m3e_cjk.h and m3e_strings.h to recovery_ui/include/recovery_ui/
 (override with --out DIR). The BASIC layout engine is pinned so the output
 does not depend on whether Pillow was built with libraqm.
+Existing glyphs are retained from the output atlas (or the checked-in atlas
+when --out is empty), so host FreeType updates do not restyle other pages.
 """
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
@@ -23,17 +26,41 @@ metadata = json.loads((ROOT / 'fonts/NotoSansSC-SOURCE.json').read_text())
 assert hashlib.sha256(args.font.read_bytes()).hexdigest() == metadata[0]['sha256']
 strings = json.loads((ROOT / 'translations.json').read_text(encoding='utf-8'))
 codes = sorted({ord(c) for s in list(strings) + list(strings.values()) for c in s if ord(c) > 126})
-parts = ['// UI glyph subset from Noto Sans SC; SIL OFL 1.1. See m3e-cjk-OFL.txt.',
+existing = args.out / 'm3e_cjk.h'
+if not existing.exists():
+    existing = OUT / 'm3e_cjk.h'
+old = existing.read_text(encoding='utf-8') if existing.exists() else ''
+old_codes = list(map(int, re.search(r'kCjkCodes\[\] = \{([^}]+)', old)[1].split(','))) if old else []
+legacy_ascent = int((re.search(r'kLegacyCjkAscent = (\d+)', old) or re.search(r'kCjkAscent = (\d+)', old))[1]) if old else 0
+legacy_descent = int((re.search(r'kLegacyCjkDescent = (\d+)', old) or re.search(r'kCjkDescent = (\d+)', old))[1]) if old else 0
+parts = ['/*', ' * SPDX-FileCopyrightText: The uwuAOSP Project',
+         ' * SPDX-License-Identifier: Apache-2.0', ' */',
+         '// UI glyph subset from Noto Sans SC; SIL OFL 1.1. See m3e-cjk-OFL.txt.',
          '#pragma once', '#include "m3e_font.h"',
          'namespace recovery_m3e { namespace fontdata {',
          f'inline constexpr int kCjkCount = {len(codes)};',
          'inline constexpr uint32_t kCjkCodes[] = {' + ','.join(map(str, codes)) + '};']
 top_extent, bottom_extent = 0, 0
 for style, weight in [('Regular', 400), ('Bold', 700)]:
+    # Keep checked-in glyphs pixel-identical across host FreeType versions.
+    # Rasterize only added characters, retaining the untouched page baseline.
+    previous = {}
+    if old:
+        records = [tuple(map(int, g.split(','))) for g in re.findall(r'\{([^{}]+)\}',
+                   re.search(r'kCjk'+style+r'\[kCjkCount\] = \{(.*?)\n\};', old, re.S)[1])]
+        data = list(map(int, filter(None, re.search(r'kCjk'+style+r'Data\[\] = \{(.*?)\n\};',
+                    old, re.S)[1].replace('\n', '').split(','))))
+        previous = dict(zip(old_codes, records))
     font = ImageFont.truetype(str(args.font), 96, layout_engine=ImageFont.Layout.BASIC)
     font.set_variation_by_axes([weight])
     blob, glyphs = [], []
     for code in codes:
+        if code in previous:
+            offset, length, w, h, left, top, advance = previous[code]
+            glyphs.append((len(blob), length, w, h, left, top, advance))
+            blob.extend(data[offset:offset+length])
+            top_extent, bottom_extent = max(top_extent, -top), max(bottom_extent, top+h)
+            continue
         ch = chr(code)
         left, top, right, bottom = font.getbbox(ch, anchor='ls')
         w, h = right-left, bottom-top
@@ -56,7 +83,9 @@ for style, weight in [('Regular', 400), ('Bold', 700)]:
     parts += ['{'+','.join(map(str, g))+'},' for g in glyphs]
     parts.append('};')
 parts += [f'inline constexpr int kCjkAscent = {top_extent};',
-          f'inline constexpr int kCjkDescent = {bottom_extent};', '}}', '']
+          f'inline constexpr int kCjkDescent = {bottom_extent};',
+          f'inline constexpr int kLegacyCjkAscent = {legacy_ascent or top_extent};',
+          f'inline constexpr int kLegacyCjkDescent = {legacy_descent or bottom_extent};', '}}', '']
 (args.out / 'm3e_cjk.h').write_bytes('\n'.join(parts).encode())
 parts = ['/*', ' * SPDX-FileCopyrightText: The uwuAOSP Project',
              ' * SPDX-License-Identifier: Apache-2.0', ' */',

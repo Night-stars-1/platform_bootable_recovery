@@ -5,6 +5,7 @@
 #pragma once
 #include "m3e_font.h"
 #include "m3e_cjk.h"
+#include "m3e_design_fonts.h"
 #include "m3e_strings.h"
 #include <algorithm>
 #include <array>
@@ -12,7 +13,16 @@
 #include <string>
 #include <vector>
 namespace recovery_m3e {
-enum class Font { Body, Menu, Title, Small, Heading, DesignTitle, DesignBrand, Code, Caption, Command, Instruction, Source };
+enum class Font { Body, Menu, Title, Small, Heading, DesignTitle, DesignBrand, Code, Caption, Command, Instruction, Source, DesignBody, DesignMenu, DesignSmall, DesignHeading, DesignRecoveryTitle };
+enum class Face { Legacy, Flex, Outfit, Code };
+inline Face FaceFor(Font font) {
+  switch(font) {
+    case Font::DesignBrand: return Face::Outfit;
+    case Font::Code: case Font::Caption: case Font::Command: return Face::Code;
+    case Font::Body: case Font::Menu: case Font::Title: case Font::Small: case Font::Heading: return Face::Legacy;
+    default: return Face::Flex;
+  }
+}
 inline bool Monospace(Font font) {return font==Font::Code || font==Font::Caption || font==Font::Command;}
 // Scale basis: the shorter screen side, set once the framebuffer size is known.
 // Layout widths stay full-screen; only dp scaling is capped, so portrait screens
@@ -30,7 +40,12 @@ inline int Dp(int width, float dp) {
 }
 inline int FontPixels(Font font, int width) {
   switch(font) {
-    case Font::DesignTitle: return Dp(width,22);
+    case Font::DesignTitle: return Dp(width,GetLanguage()==Language::Chinese?18:22);
+    case Font::DesignRecoveryTitle: return Dp(width,GetLanguage()==Language::Chinese?22:28);
+    case Font::DesignBody: return Dp(width,GetLanguage()==Language::Chinese?13:14);
+    case Font::DesignMenu: return Dp(width,GetLanguage()==Language::Chinese?16:18);
+    case Font::DesignSmall: return Dp(width,12);
+    case Font::DesignHeading: return Dp(width,GetLanguage()==Language::Chinese?22:25);
     case Font::DesignBrand: return Dp(width,28);
     case Font::Code: return Dp(width,11);
     case Font::Caption: return Dp(width,9);
@@ -70,39 +85,59 @@ inline const fontdata::Glyph& GlyphAt(int index,bool bold) {
   if(index<95) return bold?fontdata::kBold[index]:fontdata::kRegular[index];
   return bold?fontdata::kCjkBold[index-95]:fontdata::kCjkRegular[index-95];
 }
-inline const fontdata::Glyph& GlyphFor(uint32_t ch,bool bold) {return GlyphAt(GlyphIndex(ch),bold);}
-inline int TextAscent() {return std::max(fontdata::kAscent,fontdata::kCjkAscent);}
-inline int TextWidth(const std::string& text,int pixels,bool bold=false,bool mono=false) {
+inline const fontdata::Glyph& GlyphFor(uint32_t ch,bool bold,Face face=Face::Legacy) {
+  int index=GlyphIndex(ch);
+  if(index>=95 || face==Face::Legacy) return GlyphAt(index,bold);
+  switch(face) {
+    case Face::Flex: return bold?fontdata::kFlexBold[index]:fontdata::kFlexRegular[index];
+    case Face::Outfit: return bold?fontdata::kOutfitBold[index]:fontdata::kOutfitRegular[index];
+    case Face::Code: return bold?fontdata::kCodeBold[index]:fontdata::kCodeRegular[index];
+    default: return GlyphAt(index,bold);
+  }
+}
+inline int TextAscent(Face face=Face::Legacy) {
+  int ascent=face==Face::Flex?fontdata::kFlexAscent:face==Face::Outfit?fontdata::kOutfitAscent:
+      face==Face::Code?fontdata::kCodeAscent:fontdata::kAscent;
+  // Preserve the original page baseline when the design adds new CJK glyphs.
+  return std::max(ascent,face==Face::Legacy?fontdata::kLegacyCjkAscent:fontdata::kCjkAscent);
+}
+inline int TextDescent(Face face=Face::Legacy) {
+  int descent=face==Face::Flex?fontdata::kFlexDescent:face==Face::Outfit?fontdata::kOutfitDescent:
+      face==Face::Code?fontdata::kCodeDescent:fontdata::kDescent;
+  return std::max(descent,face==Face::Legacy?fontdata::kLegacyCjkDescent:fontdata::kCjkDescent);
+}
+inline int TextWidth(const std::string& text,int pixels,bool bold=false,bool mono=false,Face face=Face::Legacy) {
+  if(mono)face=Face::Code;
   double advance=0;size_t pos=0;
   while(pos<text.size()) {
     auto ch=NextCodepoint(text,pos);
-    advance+=mono?(ch<128?0.65:1.0)*64.0*fontdata::kSize:GlyphFor(ch,bold).advance;
+    advance+=GlyphFor(ch,bold,face).advance;
   }
   return static_cast<int>(std::ceil(advance*pixels/(64.0*fontdata::kSize)));
 }
-inline int LineHeight(int pixels) {
-  int height=TextAscent()+std::max(fontdata::kDescent,fontdata::kCjkDescent);
+inline int LineHeight(int pixels,Face face=Face::Legacy) {
+  int height=TextAscent(face)+TextDescent(face);
   return static_cast<int>(std::ceil(pixels*double(height)/fontdata::kSize));
 }
-inline std::string FitText(std::string text,int width,int pixels,bool bold=false,bool mono=false) {
-  if(TextWidth(text,pixels,bold,mono)<=width) return text;
-  if(TextWidth("...",pixels,bold,mono)>width) return {};
+inline std::string FitText(std::string text,int width,int pixels,bool bold=false,bool mono=false,Face face=Face::Legacy) {
+  if(TextWidth(text,pixels,bold,mono,face)<=width) return text;
+  if(TextWidth("...",pixels,bold,mono,face)>width) return {};
   std::vector<size_t> boundaries{0};size_t pos=0;
   while(pos<text.size()) {NextCodepoint(text,pos);boundaries.push_back(pos);}
   while(boundaries.size()>1) {
     boundaries.pop_back();
     std::string candidate=text.substr(0,boundaries.back())+"...";
-    if(TextWidth(candidate,pixels,bold,mono)<=width) return candidate;
+    if(TextWidth(candidate,pixels,bold,mono,face)<=width) return candidate;
   }
   return "...";
 }
-inline std::vector<std::string> WrapText(const std::string& text,int width,int pixels,bool bold=false,bool mono=false) {
+inline std::vector<std::string> WrapText(const std::string& text,int width,int pixels,bool bold=false,bool mono=false,Face face=Face::Legacy) {
   std::vector<std::string> lines;size_t pos=0;
   while(pos<text.size()) {
     size_t end=pos,last_space=std::string::npos;
     while(end<text.size() && text[end]!='\n') {
       size_t next=end;NextCodepoint(text,next);
-      if(TextWidth(text.substr(pos,next-pos),pixels,bold,mono)>width) break;
+      if(TextWidth(text.substr(pos,next-pos),pixels,bold,mono,face)>width) break;
       if(text[end]==' ') last_space=end;
       end=next;
     }
@@ -114,7 +149,7 @@ inline std::vector<std::string> WrapText(const std::string& text,int width,int p
   }
   return lines;
 }
-inline const std::vector<uint8_t>& GlyphMask(uint32_t ch,bool bold) {
+inline const std::vector<uint8_t>& LegacyGlyphMask(uint32_t ch,bool bold) {
   static const auto masks=[] {
     constexpr int count=95+fontdata::kCjkCount;
     std::array<std::vector<uint8_t>,2*count> result;
@@ -129,21 +164,40 @@ inline const std::vector<uint8_t>& GlyphMask(uint32_t ch,bool bold) {
   }();
   return masks[(bold?95+fontdata::kCjkCount:0)+GlyphIndex(ch)];
 }
+inline std::vector<uint8_t> DecodeGlyph(const fontdata::Glyph& glyph,const uint8_t* source) {
+  std::vector<uint8_t> mask;mask.reserve(glyph.w*glyph.h);
+  for(uint32_t i=glyph.offset;i<glyph.offset+glyph.length;i+=2)mask.insert(mask.end(),source[i],source[i+1]);
+  return mask;
+}
+inline const std::vector<uint8_t>& GlyphMask(uint32_t ch,bool bold,Face face=Face::Legacy) {
+  if(GlyphIndex(ch)>=95 || face==Face::Legacy)return LegacyGlyphMask(ch,bold);
+  static const auto masks=[] {
+    std::array<std::vector<uint8_t>,3*2*95> result;
+    const uint8_t* sources[]={fontdata::kFlexRegularData,fontdata::kFlexBoldData,
+      fontdata::kOutfitRegularData,fontdata::kOutfitBoldData,fontdata::kCodeRegularData,fontdata::kCodeBoldData};
+    for(int family=0;family<3;++family)for(int style=0;style<2;++style)for(int index=0;index<95;++index)
+      result[(family*2+style)*95+index]=DecodeGlyph(GlyphFor(index+32,style,static_cast<Face>(family+1)),sources[family*2+style]);
+    return result;
+  }();
+  return masks[((static_cast<int>(face)-1)*2+bold)*95+GlyphIndex(ch)];
+}
+inline int FontLineHeight(Font font,int width) {return LineHeight(FontPixels(font,width),FaceFor(font));}
 struct TextBitmap { int width,height; std::vector<uint8_t> alpha; };
-inline TextBitmap RasterText(const std::string& text,int pixels,bool bold,bool mono=false) {
-  TextBitmap result{std::max(1,TextWidth(text,pixels,bold,mono)+2),LineHeight(pixels),{}};
+inline TextBitmap RasterText(const std::string& text,int pixels,bool bold,bool mono=false,Face face=Face::Legacy) {
+  if(mono)face=Face::Code;
+  TextBitmap result{std::max(1,TextWidth(text,pixels,bold,mono,face)+2),LineHeight(pixels,face),{}};
   result.alpha.resize(result.width*result.height);
   const double scale=double(pixels)/fontdata::kSize;
   double cursor=0;
   size_t pos=0;
   while(pos<text.size()) {
     uint32_t ch=NextCodepoint(text,pos);
-    const auto& g=GlyphFor(ch,bold);
-    const auto& mask=GlyphMask(ch,bold);
-    double advance=mono?(ch<128?0.65:1.0)*pixels:g.advance*scale/64;
-    double scale_x=mono?std::min(scale,std::max(1.0,advance-1)/std::max(1,static_cast<int>(g.w))):scale;
-    const int left=std::lround(cursor+(mono?(advance-g.w*scale_x)/2:g.left*scale));
-    const int top=std::lround((TextAscent()+g.top)*scale);
+    const auto& g=GlyphFor(ch,bold,face);
+    const auto& mask=GlyphMask(ch,bold,face);
+    double advance=g.advance*scale/64;
+    double scale_x=scale;
+    const int left=std::lround(cursor+g.left*scale);
+    const int top=std::lround((TextAscent(face)+g.top)*scale);
     int w=std::ceil(g.w*scale_x), h=std::ceil(g.h*scale);
     auto sample=[&](int x,int y)->double {
       return x<0 || y<0 || x>=g.w || y>=g.h ? 0 : mask[y*g.w+x];

@@ -34,9 +34,9 @@ inline void Draw(Canvas& c,int width,int height,const std::string& input,
                  const std::vector<std::string>& output,bool symbols,bool shift,int focus) {
   Metrics m(width);c.Fill({0,0,width,height},design::background);
   auto back=design::Back(width);Surface(c,back,back.h/2,design::surface,focus==-1,design::text,Dp(width,1));
-  DrawIcon(c,Inset(back,Dp(width,9)),Icon::Back,design::text);
-  Label(c,m,back.x+back.w+Dp(width,14),back.y+Dp(width,3),width-back.x-back.w-Dp(width,30),"Terminal",Font::Menu,design::text);
-  auto keys=Keyboard(width,height,symbols,shift);int pad=Dp(width,12),lh=LineHeight(FontPixels(Font::Code,width));
+  design::Symbol(c,Inset(back,Dp(width,7)),design::Glyph::Back);
+  Label(c,m,back.x+back.w+Dp(width,14),back.y+Dp(width,3),width-back.x-back.w-Dp(width,30),"Terminal",Font::DesignMenu,design::text);
+  auto keys=Keyboard(width,height,symbols,shift);int pad=Dp(width,12),lh=FontLineHeight(Font::Code,width);
   int input_y=keys.front().bounds.y-Dp(width,32),top=back.y+back.h+Dp(width,12);
   std::vector<std::string> rows;
   for(const auto& line:output)for(const auto& row:WrapText(line,width-2*pad,FontPixels(Font::Code,width),false,true))rows.push_back(row);
@@ -49,7 +49,7 @@ inline void Draw(Canvas& c,int width,int height,const std::string& input,
     auto b=keys[i].bounds;Surface(c,b,Dp(width,5),design::surface,focus==static_cast<int>(i),design::green,Dp(width,1));
     auto label=FitText(keys[i].label,b.w-Dp(width,2),FontPixels(Font::Caption,width),false,true);
     int tw=TextWidth(label,FontPixels(Font::Caption,width),false,true);
-    c.Text(b.x+(b.w-tw)/2,b.y+(b.h-LineHeight(FontPixels(Font::Caption,width)))/2,label,Font::Caption,design::text,false);
+    c.Text(b.x+(b.w-tw)/2,b.y+(b.h-FontLineHeight(Font::Caption,width))/2,label,Font::Caption,design::text,false);
   }
 }
 // Consume terminal control characters without exposing escape sequences in the log view.
