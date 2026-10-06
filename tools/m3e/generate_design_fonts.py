@@ -37,7 +37,8 @@ for family, filename in [('Flex', 'GoogleSansFlex.ttf'), ('Outfit', 'Outfit.ttf'
         values = []
         for axis in axes:
             name = axis['name'].lower()
-            value = weight if b'weight' in name else 24 if b'optical' in name else (style == 'Bold') if b'fill' in name else axis['default']
+            # Symbol fill is independent of weight; 400 matches the SVG icons.
+            value = (400 if family == 'Symbols' else weight) if b'weight' in name else 24 if b'optical' in name else (style == 'Bold') if b'fill' in name else axis['default']
             values.append(max(axis['minimum'], min(axis['maximum'], value)))
         font.set_variation_by_axes(values)
         ascent, descent = font.getmetrics()

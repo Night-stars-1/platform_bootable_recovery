@@ -26,7 +26,7 @@
       "source": "https://raw.githubusercontent.com/google/material-design-icons/737e3324305806514d7909874fa1818ae1808232/variablefont/MaterialSymbolsRounded%5BFILL%2CGRAD%2Copsz%2Cwght%5D.ttf",
       "git_commit": "737e3324305806514d7909874fa1818ae1808232",
       "source_sha256": "95b24392bb49efd1bc3e92cff4e2452ad094461bab7c97e7d8723fab97e330ca",
-      "sha256": "ac6f9f8dba295be36a402ec3cdf624e81df5088752fd0f9464726c67e9adee2f",
+      "sha256": "cbf101e01800d72cb4d1f639ad7bfd0378d24ac362fcd1948c3f0adc8847409d",
       "subset": {
         "fonttools": "4.66.1",
         "names": {
@@ -42,9 +42,14 @@
           "Phone": "system_update",
           "Trash": "delete",
           "Power": "power_settings_new",
-          "BatteryEmpty": "battery_horiz_000",
-          "BatteryHalf": "battery_horiz_050",
-          "BatteryFull": "battery_horiz_075"
+          "BatteryEmpty": "battery_android_0",
+          "Battery1": "battery_android_1",
+          "Battery2": "battery_android_2",
+          "Battery3": "battery_android_3",
+          "Battery4": "battery_android_4",
+          "Battery5": "battery_android_5",
+          "Battery6": "battery_android_6",
+          "BatteryFull": "battery_android_full"
         },
         "recalc_timestamp": false,
         "name_IDs": "*",
@@ -65,9 +70,14 @@
     "Phone": 62157,
     "Trash": 59694,
     "Power": 63687,
-    "BatteryEmpty": 63662,
-    "BatteryHalf": 63663,
-    "BatteryFull": 63664
+    "BatteryEmpty": 62221,
+    "Battery1": 62220,
+    "Battery2": 62219,
+    "Battery3": 62218,
+    "Battery4": 62217,
+    "Battery5": 62216,
+    "Battery6": 62215,
+    "BatteryFull": 62212
   },
   "licenses": [
     {

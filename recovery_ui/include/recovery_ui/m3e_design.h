@@ -94,7 +94,10 @@ inline void Battery(Canvas& c,int width,int capacity,bool charging) {
   Rounded(c,box,h/2,surface);
   c.Text(box.x+pad,box.y+(h-FontLineHeight(Font::DesignSmall,width))/2,value,Font::DesignSmall,text,false);
   Rect cell{box.x+bw-pad-icon,box.y+(h-icon)/2,icon,icon};
-  Symbol(c,cell,capacity<25?Glyph::BatteryEmpty:capacity<65?Glyph::BatteryHalf:Glyph::BatteryFull,text,true);
+  constexpr Glyph levels[]={Glyph::BatteryEmpty,Glyph::Battery1,Glyph::Battery2,
+    Glyph::Battery3,Glyph::Battery4,Glyph::Battery5,Glyph::Battery6,Glyph::BatteryFull};
+  int level=capacity>=0 && capacity<=100?capacity*7/100:0;
+  Symbol(c,cell,levels[level],text,level!=0);
 }
 inline void Footer(Canvas& c,int width,int height,const std::vector<std::string>& details) {
   Metrics m(width);int y=FooterTop(width,height),pad=Dp(width,24),lh=FontLineHeight(Font::Code,width);
