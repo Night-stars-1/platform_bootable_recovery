@@ -7,6 +7,7 @@
 #include "recovery_ui/m3e_design.h"
 #include "recovery_ui/m3e_terminal.h"
 #include "recovery_ui/m3e_password.h"
+#include "recovery_ui/device_info.h"
 #include <cassert>
 #include <fstream>
 #include <iostream>
@@ -206,7 +207,7 @@ void RenderList(const std::string& out,int w,int h,bool zh,int count,int first_i
 void RenderDesign(const std::string& out,int w,int h,bool zh,int page,bool pixels=false) {
   SetScaleBasis(w,h);SetLanguage(zh?Language::Chinese:Language::English);
   PixelCanvas c(w,h,pixels);c.Fill({0,0,w,h},design::background);
-  const std::vector<std::string> details{"Product name - astonc","Version 17.0.130 (2026-10-05)"};
+  const std::vector<std::string> details{"Device name - Redmi K50 Ultra","Product name - diting","Version 17.0.130 (2026-10-05)"};
   if(page>=7) {
     password::Draw(c,w,h,page==7,8,false,false,-2);
 #ifdef M3E_INSTALL_ROUTING_TEST
@@ -252,6 +253,17 @@ void RenderDesign(const std::string& out,int w,int h,bool zh,int page,bool pixel
     design::Footer(c,w,h,details);
   }
   if(page!=5 && page<7)design::Battery(c,w,82,false);
+  if(page<5 || page==6) {
+    auto label=std::find_if(c.runs.begin(),c.runs.end(),[](const PixelCanvas::Run& run){
+      return run.text==Tr("Recovery version");
+    });
+    assert(label!=c.runs.end() && label+1!=c.runs.end());
+    const auto& version=*(label+1);
+    assert(label->bounds.x+label->bounds.w==w-Dp(w,24));
+    assert(version.bounds.x+version.bounds.w==label->bounds.x+label->bounds.w);
+    assert(version.bounds.y==label->bounds.y+FontLineHeight(Font::Code,w));
+    assert(c.Has("Redmi K50 Ultra") && c.Has("codename: diting"));
+  }
   // Check visible icon alignment in every complete page, including small screens.
   for(const auto& mask:c.symbol_masks) {
     assert(mask.ink.w>0 && mask.ink.h>0);

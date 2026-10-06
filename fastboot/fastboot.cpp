@@ -33,6 +33,7 @@
 #include <bootloader_message/bootloader_message.h>
 
 #include "recovery_ui/ui.h"
+#include "recovery_ui/device_info.h"
 
 static const std::vector<std::pair<std::string, Device::BuiltinAction>> kFastbootMenuActions{
   { "Reboot system now", Device::REBOOT_FROM_FASTBOOT },
@@ -51,7 +52,9 @@ void FillDefaultFastbootLines(std::vector<std::string>& title_lines) {
   std::string baseband_version = android::base::GetProperty("ro.build.expect.baseband", "");
   std::string hw_version = android::base::GetProperty(
       "ro.boot.hardware.revision", android::base::GetProperty("ro.revision", ""));
-  title_lines.push_back("Product name - " + android::base::GetProperty("ro.product.device", ""));
+  recovery_ui::AppendDeviceInfo(title_lines, [](const std::string& key) {
+    return android::base::GetProperty(key, "");
+  });
   if (!android::base::EqualsIgnoreCase(bootloader_version, "unknown")) {
     title_lines.push_back("Bootloader version - " + bootloader_version);
   }
