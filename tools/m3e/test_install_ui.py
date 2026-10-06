@@ -349,7 +349,7 @@ void EntryFlow() {
     Device d;StartFastboot(&d,{});auto info=ReadDeviceInfo(d.ui.details);
     assert(info.name==(key==std::string("ro.product.device")?"diting":"Redmi K50 Ultra"));
     PixelCanvas canvas(360,800);design::Footer(canvas,360,800,d.ui.details);
-    assert(canvas.Has(info.name) && canvas.Has("codename: diting") && canvas.Has("17.0.130"));
+    assert(canvas.Has("uwuAOSP recovery") && canvas.Has("codename: "+info.name) && canvas.Has("17.0.130"));
   }
   android::base::properties["bluetooth.device.default_name"]="Redmi K50 Ultra";
   android::base::properties["ro.product.model"]="22081212C";

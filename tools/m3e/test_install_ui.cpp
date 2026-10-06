@@ -262,7 +262,7 @@ void RenderDesign(const std::string& out,int w,int h,bool zh,int page,bool pixel
     assert(label->bounds.x+label->bounds.w==w-Dp(w,24));
     assert(version.bounds.x+version.bounds.w==label->bounds.x+label->bounds.w);
     assert(version.bounds.y==label->bounds.y+FontLineHeight(Font::Code,w));
-    assert(c.Has("Redmi K50 Ultra") && c.Has("codename: diting"));
+    assert(c.Has("uwuAOSP recovery") && c.Has("codename: Redmi K50 Ultra"));
   }
   // Check visible icon alignment in every complete page, including small screens.
   for(const auto& mask:c.symbol_masks) {

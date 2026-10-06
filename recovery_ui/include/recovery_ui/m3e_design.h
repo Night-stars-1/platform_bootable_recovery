@@ -102,8 +102,8 @@ inline void Footer(Canvas& c,int width,int height,const std::vector<std::string>
   auto info=ReadDeviceInfo(details);
   auto date=info.version.find(" (");if(date!=std::string::npos)info.version.resize(date);
   int right=width-Dp(width,143),ty=y+Dp(width,15);
-  Label(c,m,pad,ty,right-pad-Dp(width,8),info.name.empty()?info.product:info.name,Font::Code,text);
-  Label(c,m,pad,ty+lh,right-pad-Dp(width,8),"codename: "+info.product,Font::Code,text);
+  Label(c,m,pad,ty,right-pad-Dp(width,8),"uwuAOSP recovery",Font::Code,text);
+  Label(c,m,pad,ty+lh,right-pad-Dp(width,8),"codename: "+(info.name.empty()?info.product:info.name),Font::Code,text);
   auto right_label=[&](const std::string& value,int top) {
     int pixels=FontPixels(Font::Code,width);
     auto label=FitText(Tr(value),width-right-pad,pixels,false,true,Face::Code);
