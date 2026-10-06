@@ -314,7 +314,7 @@ struct Drawing : DrawInterface {
 };
 void EntryFlow() {
   static bool checked=false;if(checked)return;checked=true;
-  android::base::properties={{"ro.product.device","diting"},{"bluetooth.device.default_name","Redmi K50 Ultra"},{"ro.product.model","22081212C"},{"ro.uwu.release","17.0.130"},
+  android::base::properties={{"ro.product.device","diting"},{"ro.uwu.release","17.0.130"},
     {"ro.serialno","host-example"},{"ro.secure","1"},{"ro.bootloader","sample-bootloader"}};
   const std::vector<Device::BuiltinAction> normal{Device::REBOOT_FROM_FASTBOOT,Device::REBOOT_BOOTLOADER,
       Device::ENTER_RECOVERY,Device::SHUTDOWN_FROM_FASTBOOT};
@@ -326,7 +326,7 @@ void EntryFlow() {
     assert(d.started && d.ui.reset && d.ui.visible && d.ui.logo==!wear);
     if(!wear) {
       assert(d.ui.items==std::vector<std::string>({"Reboot system now","Reboot to bootloader","Enter recovery","Power off"}));
-      auto info=ReadDeviceInfo(d.ui.details);assert(info.name=="Redmi K50 Ultra" && info.product=="diting" && info.version=="17.0.130");
+      auto info=ReadDeviceInfo(d.ui.details);assert(info.product=="diting" && info.version=="17.0.130");
       assert(std::find(d.ui.details.begin(),d.ui.details.end(),"Serial number - host-example")!=d.ui.details.end());
       assert(std::find(d.ui.details.begin(),d.ui.details.end(),"Secure boot - yes")!=d.ui.details.end());
     } else assert(d.ui.items[1]=="Enter recovery" && d.ui.details.front()=="Android Fastboot");
@@ -342,17 +342,6 @@ void EntryFlow() {
     assert(ReadDeviceInfo(details).version=="fallback-version");
   }
   android::base::properties["ro.uwu.release"]="17.0.130";
-  for(const char* key:{"ro.product.marketname","bluetooth.device.default_name","ro.product.model","ro.product.device"}) {
-    for(const char* name:{"ro.product.marketname","ro.product.vendor.marketname","ro.product.odm.marketname","bluetooth.device.default_name","ro.product.model"})
-      android::base::properties.erase(name);
-    android::base::properties[key]=key==std::string("ro.product.device")?"diting":"Redmi K50 Ultra";
-    Device d;StartFastboot(&d,{});auto info=ReadDeviceInfo(d.ui.details);
-    assert(info.name==(key==std::string("ro.product.device")?"diting":"Redmi K50 Ultra"));
-    PixelCanvas canvas(360,800);design::Footer(canvas,360,800,d.ui.details);
-    assert(canvas.Has("uwuAOSP recovery") && canvas.Has("codename: "+info.name) && canvas.Has("17.0.130"));
-  }
-  android::base::properties["bluetooth.device.default_name"]="Redmi K50 Ultra";
-  android::base::properties["ro.product.model"]="22081212C";
   std::cout<<"PASS: actual fastboot entry, live metadata mapping, wearable order, four actions, timeout and interrupt\n";
 }
 void Render(PixelCanvas& canvas,int w,int h) {
@@ -614,7 +603,6 @@ static void M3eSetColor(recovery_m3e::Color) {}
                             str(build / 'android-install-renderer.o')], check=True)
     fastboot = (ROOT / 'fastboot/fastboot.cpp').read_text(encoding='utf-8')
     entry = '''#include "recovery_ui/device.h"
-#include "recovery_ui/device_info.h"
 #include <algorithm>
 #include <functional>
 #include <iostream>

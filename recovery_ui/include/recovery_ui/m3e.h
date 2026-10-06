@@ -281,12 +281,11 @@ inline int DrawDashboard(Canvas& c,const Metrics& m,int y,int available,int sele
   Label(c,m,tx,b.y+Dp(m.width,39),b.x+b.w-pad-tx,"Review erase options",Font::Small,p.secondary);
   return layout.height;
 }
-struct DeviceInfo {std::string name,product,slot,version;std::vector<std::string> extra;};
+struct DeviceInfo {std::string product,slot,version;std::vector<std::string> extra;};
 inline DeviceInfo ReadDeviceInfo(const std::vector<std::string>& lines) {
   DeviceInfo info;
   for(const auto& line:lines) {
-    if(line.rfind("Device name - ",0)==0) info.name=line.substr(14);
-    else if(line.rfind("Product name - ",0)==0) info.product=line.substr(15);
+    if(line.rfind("Product name - ",0)==0) info.product=line.substr(15);
     else if(line.rfind("Product name: ",0)==0) info.product=line.substr(14);
     else if(line.rfind("Active slot: ",0)==0) info.slot=line.substr(13);
     else if(line.rfind("Version ",0)==0) info.version=line.substr(8);

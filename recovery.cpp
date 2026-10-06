@@ -59,7 +59,6 @@
 #include "otautil/sysutil.h"
 #include "recovery_ui/screen_ui.h"
 #include "recovery_ui/ui.h"
-#include "recovery_ui/device_info.h"
 #include "recovery_ui/m3e_locale_store.h"
 #include "recovery_utils/battery_utils.h"
 #include "recovery_utils/logging.h"
@@ -966,9 +965,7 @@ Device::BuiltinAction start_recovery(Device* device, const std::vector<std::stri
   std::vector<std::string> title_lines = {
     "Version " + build_version + " (" + ver_date + ")",
   };
-  recovery_ui::AppendDeviceInfo(title_lines, [](const std::string& key) {
-    return android::base::GetProperty(key, "");
-  });
+  title_lines.push_back("Product name - " + android::base::GetProperty("ro.product.device", ""));
   if (android::base::GetBoolProperty("ro.build.ab_update", false)) {
     std::string slot = android::base::GetProperty("ro.boot.slot_suffix", "");
     if (android::base::StartsWith(slot, "_")) slot.erase(0, 1);
