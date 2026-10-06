@@ -56,39 +56,23 @@ bool ReadCredential(Device* device, uint32_t type, uint32_t pattern_size, Creden
     } pattern(*credential, pattern_size);
     return device->GetUI()->ReadPattern(pattern);
   }
-  std::string prompt;
-  std::vector<std::string> items{"Unlock storage", "Delete last character", "Clear input", "Cancel"};
-  std::vector<uint8_t> characters;
-  switch (type) {
-    case RC_CREDENTIAL_PIN:
-      prompt = "Enter your lock-screen PIN";
-      for (uint8_t c = '0'; c <= '9'; ++c) { items.emplace_back(1, c); characters.push_back(c); }
-      break;
-    case RC_CREDENTIAL_PASSWORD:
-      prompt = "Enter your lock-screen password";
-      // Basic ASCII selection with touch or volume/power keys. Non-ASCII needs
-      // a keyboard extension; never guess or alter the stored credential.
-      for (uint8_t c = 32; c <= 126; ++c) {
-        items.push_back(c == 32 ? "Space" : std::string(1, c));
-        characters.push_back(c);
-      }
-      break;
-    default: return false;
-  }
-  for (;;) {
-    // Only the length appears in titles. No typed values enter strings/logs.
-    const auto picked = Select(device, {"Unlock internal storage", prompt,
-        "Entered characters: " + std::to_string(credential->size())}, items);
-    if (picked >= items.size() || picked == 3) { credential->Clear(); return false; }
-    if (picked == 0) {
-      if (credential->size()) return true;
-      continue;
+  if (type!=RC_CREDENTIAL_PIN && type!=RC_CREDENTIAL_PASSWORD) return false;
+  class LockedPassword final : public recovery_ui::PasswordInput {
+   public:
+    LockedPassword(Credential& credential,bool numeric) : credential_(credential),numeric_(numeric) {}
+    bool NumericOnly() const override { return numeric_; }
+    size_t Size() const override { return credential_.size(); }
+    bool Append(uint8_t character) override {
+      if (numeric_ ? character<'0' || character>'9' : character<32 || character>126) return false;
+      return credential_.Append(character);
     }
-    if (picked == 1) { credential->EraseLast(); continue; }
-    if (picked == 2) { credential->Clear(); continue; }
-    const uint8_t character = characters[picked - 4];
-    credential->Append(character);
-  }
+    void EraseLast() override { credential_.EraseLast(); }
+    void Clear() override { credential_.Clear(); }
+   private:
+    Credential& credential_;
+    bool numeric_;
+  } input(*credential,type==RC_CREDENTIAL_PIN);
+  return device->GetUI()->ReadPassword(input);
 }
 
 bool UnlockStorage(Device* device) {
