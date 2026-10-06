@@ -546,6 +546,15 @@ void CryptoCheck() {
     return source + '} // namespace PasswordFlow\n'
 
 
+def terminal_flow():
+    """Replay the complete production terminal loop with host PTY/display I/O substitutes."""
+    screen = (ROOT / 'recovery_ui/screen_ui.cpp').read_text(encoding='utf-8')
+    fixture = (ROOT / 'tools/m3e/terminal_flow_fixture.inc').read_text(encoding='utf-8')
+    methods = '\n'.join(function(screen, signature) for signature in (
+        'void ScreenRecoveryUI::DrawTerminalLocked()', 'void ScreenRecoveryUI::ShowTerminal()'))
+    return fixture.replace('// ACTUAL_UI_METHODS', methods)
+
+
 def compile_android(clang, build):
     source = (ROOT / 'recovery_ui/screen_ui.cpp').read_text(encoding='utf-8')
     unit = '''#include "recovery_ui/screen_ui.h"
@@ -643,6 +652,7 @@ def run(cxx, out, ndk_clang=None):
         (build / 'install_routing.inc').write_text(routing_test(), encoding='utf-8')
         (build / 'fastboot_flow.inc').write_text(fastboot_flow(), encoding='utf-8')
         (build / 'password_flow.inc').write_text(password_flow(), encoding='utf-8')
+        (build / 'terminal_flow.inc').write_text(terminal_flow(), encoding='utf-8')
         exe = build / ('test.exe' if os.name == 'nt' else 'test')
         subprocess.run([cxx, '-std=c++17', '-O1', '-Wall', '-Wextra', '-Werror',
                         '-DM3E_INSTALL_ROUTING_TEST', '-I' + str(ROOT / 'recovery_ui/include'),
@@ -673,7 +683,7 @@ def run(cxx, out, ndk_clang=None):
                     draw.text((x, y), name.title(), font=ImageFont.load_default(size=17), fill='#272034')
                     sheet.paste(frame.resize((tile_w, tile_h), Image.Resampling.LANCZOS), (x, y + 25))
             sheet.save(out / ('install-flow-' + locale + '.png'))
-        for frame_path in sorted(list(build.glob('grouped-list-*.ppm')) + list(build.glob('design-*.ppm'))):
+        for frame_path in sorted(list(build.glob('grouped-list-*.ppm')) + list(build.glob('design-*.ppm')) + list(build.glob('terminal-history-*.ppm'))):
             with Image.open(frame_path) as frame:
                 frame.save(out / (frame_path.stem + '.png'))
     print('Previews: ' + str(out))

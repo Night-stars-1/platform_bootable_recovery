@@ -84,6 +84,7 @@ const char* names[]={"waiting","verifying","installing","success","error","cance
 #ifdef M3E_INSTALL_ROUTING_TEST
 #include "fastboot_flow.inc"
 #include "password_flow.inc"
+#include "terminal_flow.inc"
 #endif
 
 void Render(const std::string& out,int w,int h,bool zh,int index,bool pixels=false) {
@@ -223,7 +224,12 @@ void RenderDesign(const std::string& out,int w,int h,bool zh,int page,bool pixel
   }
   else if(page>=3 && page<=4)design::Adb(c,w,h,page==3,0.04,true,
       page==3?std::vector<std::string>{}:std::vector<std::string>{"Finding package...","Verifying package...","Installing updates","Step 1/2"},details);
-  else if(page==5)terminal::Draw(c,w,h,"ls /system/bin",{"# pwd","/","# ls /system/bin"},false,false,-1);
+  else if(page==5) {
+    terminal::Draw(c,w,h,"ls /system/bin",{"# pwd","/","# ls /system/bin"},false,false,-1);
+#ifdef M3E_INSTALL_ROUTING_TEST
+    if(!pixels)TerminalFlow::Check(w,h,out);
+#endif
+  }
   else {
     auto kind=page==0?design::Page::Home:page==1?design::Page::Reboot:design::Page::Sources;
     design::Header(c,w,h,kind);int top=design::MenuTop(w,h,kind),available=design::FooterTop(w,h)-Dp(w,10)-top;

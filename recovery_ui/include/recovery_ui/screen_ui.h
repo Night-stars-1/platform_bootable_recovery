@@ -30,6 +30,8 @@
 
 #include "ui.h"
 
+namespace recovery_m3e::terminal {struct State;}
+
 // From minui/minui.h.
 class GRSurface;
 
@@ -512,7 +514,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   bool terminal_symbols_ = false;
   int terminal_focus_ = -1;
   std::string terminal_input_;
-  std::vector<std::string> terminal_output_;
+  std::unique_ptr<recovery_m3e::terminal::State> terminal_state_;
   void DrawTerminalLocked();
   // Retain the visible frame until the next menu/action is ready. Both fields
   // are protected by updateMutex, like menu_.

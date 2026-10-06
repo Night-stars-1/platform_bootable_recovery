@@ -100,7 +100,8 @@ static void M3eSetColor(recovery_m3e::Color c) { gr_color(c.r, c.g, c.b, 255); }
 
 void ScreenRecoveryUI::DrawTerminalLocked() {
   M3eCanvas canvas;
-  recovery_m3e::terminal::Draw(canvas,ScreenWidth(),ScreenHeight(),terminal_input_,terminal_output_,
+  terminal_state_->view.Update(terminal_state_->output,ScreenWidth(),ScreenHeight());
+  recovery_m3e::terminal::Draw(canvas,ScreenWidth(),ScreenHeight(),terminal_input_,terminal_state_->view,
       terminal_symbols_,terminal_shift_,terminal_focus_);
 }
 
@@ -110,14 +111,15 @@ void ScreenRecoveryUI::ShowTerminal() {
   int columns=std::max(20,ScreenWidth()/recovery_m3e::Dp(ScreenWidth(),7));
   bool opened=session.Open(24,columns);
   std::string start_error=opened?"":std::string("Unable to start terminal: ")+strerror(errno)+"\n";
-  recovery_m3e::terminal::Output output;
   {
     std::lock_guard<std::mutex> lock(updateMutex);
     menu_.reset();transition_menu_.reset();menu_transition_=false;
     terminal_visible_=true;terminal_shift_=terminal_symbols_=false;terminal_focus_=-1;
-    output.Append(start_error.data(),start_error.size());
-    terminal_input_.clear();terminal_output_=output.lines;FlushKeys();update_screen_locked();
+    terminal_state_=std::make_unique<recovery_m3e::terminal::State>();
+    terminal_state_->output.Append(start_error.data(),start_error.size());
+    terminal_input_.clear();gesture_input_=true;FlushKeys();update_screen_locked();
   }
+  auto& output=terminal_state_->output;
   std::atomic<bool> stopped{false};
   std::thread reader;
   if (opened) reader=std::thread([&] {
@@ -130,11 +132,11 @@ void ScreenRecoveryUI::ShowTerminal() {
         const std::string ended="\n[Shell exited. Tap Back to return.]\n";
         output.Append(ended.data(),ended.size());
       } else output.Append(bytes,count);
-      terminal_output_=output.lines;update_screen_locked();
+      update_screen_locked();
       if (count<0) break;
     }
   });
-  bool done=false;
+  bool done=false,dragging=false,moved=false;int pressed=-2,remainder=0;Point origin,last;
   while (!done) {
     auto event=WaitInputEvent();
     std::lock_guard<std::mutex> lock(updateMutex);
@@ -142,7 +144,7 @@ void ScreenRecoveryUI::ShowTerminal() {
     auto send=[&](const std::string& value) {
       if (!session.Send(value)) {
         const std::string failed="\n[Input could not be sent to the shell.]\n";
-        output.Append(failed.data(),failed.size());terminal_output_=output.lines;
+        output.Append(failed.data(),failed.size());
       }
     };
     auto invoke=[&](int index) {
@@ -156,25 +158,49 @@ void ScreenRecoveryUI::ShowTerminal() {
       else if (key.label=="ABC" || key.label=="abc" || key.label=="More" || key.label=="Less")terminal_shift_=!terminal_shift_;
       else if (key.label=="Space") {if(terminal_input_.size()<4096)terminal_input_+=' ';}
       else if (key.label=="Del") {if(!terminal_input_.empty())terminal_input_.pop_back();}
-      else if (key.label=="Enter") {send(terminal_input_+"\n");terminal_input_.clear();}
+      else if (key.label=="Enter") {terminal_state_->view.Bottom();send(terminal_input_+"\n");terminal_input_.clear();}
       else if (key.label=="^C") {send(std::string(1,3));terminal_input_.clear();}
-      else if (key.label=="Clear") {output.Clear();terminal_output_=output.lines;}
+      else if (key.label=="Clear") {output.Clear();terminal_state_->view= recovery_m3e::terminal::Viewport{};}
     };
     if (event.type()==EventType::EXTRA) {
       if (event.key()==static_cast<int>(KeyError::INTERRUPTED))done=true;
       continue;
     }
-    if (event.type()==EventType::TOUCH) {
+    if (event.type()==EventType::TOUCH || event.type()==EventType::TOUCH_DOWN ||
+        event.type()==EventType::TOUCH_MOVE || event.type()==EventType::TOUCH_UP) {
       auto point=TouchPoint(event.pos());auto back=recovery_m3e::design::Back(ScreenWidth());
-      if (recovery_m3e::InRounded(back,back.h/2,point.x(),point.y()))done=true;
-      else invoke(recovery_m3e::terminal::HitKey(keys,point.x(),point.y()));
+      int action=recovery_m3e::terminal::HitKey(keys,point.x(),point.y());
+      if(action<0)action=-2;
+      if(recovery_m3e::InRounded(back,back.h/2,point.x(),point.y()))action=-1;
+      auto& view=terminal_state_->view;view.Update(output,ScreenWidth(),ScreenHeight());
+      if(event.type()==EventType::TOUCH)invoke(action);
+      else if(event.type()==EventType::TOUCH_DOWN) {
+        origin=last=point;pressed=action;moved=false;remainder=0;
+        dragging=view.Bounds().Contains(point.x(),point.y());
+        if(action>=-1)terminal_focus_=action;
+      } else {
+        int64_t dx=point.x()-origin.x(),dy=point.y()-origin.y();int slop=recovery_m3e::Dp(ScreenWidth(),16);
+        if(dx*dx+dy*dy>int64_t(slop)*slop) {pressed=-2;moved=true;}
+        if(dragging && moved) {
+          remainder+=last.y()-point.y();int rows=remainder/view.LineHeight();
+          view.Scroll(rows);remainder-=rows*view.LineHeight();last=point;
+        }
+        if(event.type()==EventType::TOUCH_UP) {
+          if(!moved && pressed!=-2 && action==pressed)invoke(action);
+          pressed=-2;dragging=false;
+        }
+      }
     } else if (event.type()==EventType::KEY) {
       int key=event.key();
       if (key==KEY_BACK || key==KEY_ESC)done=true;
       else if (key==KEY_VOLUMEUP || key==KEY_UP)terminal_focus_=terminal_focus_<0?static_cast<int>(keys.size())-1:terminal_focus_-1;
       else if (key==KEY_VOLUMEDOWN || key==KEY_DOWN)terminal_focus_=terminal_focus_+1>=static_cast<int>(keys.size())?-1:terminal_focus_+1;
       else if (key==KEY_POWER)invoke(terminal_focus_);
-      else if (key==KEY_ENTER) {send(terminal_input_+"\n");terminal_input_.clear();}
+      else if (key==KEY_PAGEUP)terminal_state_->view.Scroll(-std::max(1,terminal_state_->view.Visible()));
+      else if (key==KEY_PAGEDOWN)terminal_state_->view.Scroll(std::max(1,terminal_state_->view.Visible()));
+      else if (key==KEY_HOME)terminal_state_->view.Top();
+      else if (key==KEY_END)terminal_state_->view.Bottom();
+      else if (key==KEY_ENTER) {terminal_state_->view.Bottom();send(terminal_input_+"\n");terminal_input_.clear();}
       else if (key==KEY_BACKSPACE) {if(!terminal_input_.empty())terminal_input_.pop_back();}
       else if (key==KEY_SPACE && terminal_input_.size()<4096)terminal_input_+=' ';
     }
@@ -183,7 +209,8 @@ void ScreenRecoveryUI::ShowTerminal() {
   stopped=true;if(reader.joinable())reader.join();session.Close();
   {
     std::lock_guard<std::mutex> lock(updateMutex);
-    terminal_visible_=false;terminal_input_.clear();terminal_output_.clear();
+    gesture_input_=false;discard_touch_until_press_=true;
+    terminal_visible_=false;terminal_input_.clear();terminal_state_.reset();
     menu_transition_=true;FlushKeys();
   }
 }
