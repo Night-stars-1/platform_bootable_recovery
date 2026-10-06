@@ -157,6 +157,11 @@ void CheckRouting() {
     design.menu_=std::make_unique<TestMenu>(TestMenu{title});assert(design.IsDesignMenuLocked());
     design.fastbootd_logo_enabled_=true;assert(!design.IsDesignMenuLocked());design.fastbootd_logo_enabled_=false;
   }
+  design.menu_=std::make_unique<TestMenu>(TestMenu{"FastbootD"});
+  assert(!design.IsDesignMenuLocked());design.fastbootd_logo_enabled_=true;
+  assert(design.IsDesignMenuLocked());design.pattern_input_=reinterpret_cast<void*>(1);
+  assert(!design.IsDesignMenuLocked());design.pattern_input_=nullptr;
+  design.fastbootd_logo_enabled_=false;
   design.menu_.reset();design.SetInstallStage(InstallStage::INSTALLING);assert(!design.IsDesignAdbLocked());
   design.SetInstallStage(InstallStage::WAITING);assert(design.IsDesignAdbLocked());
   design.SetInstallStage(InstallStage::VERIFYING);assert(!design.IsDesignAdbLocked());
@@ -212,6 +217,169 @@ void CheckRouting() {
 '''
 
 
+def fastboot_flow():
+    """Run actual fastboot entry and TextMenu render/navigation with host I/O substitutes."""
+    screen = (ROOT / 'recovery_ui/screen_ui.cpp').read_text(encoding='utf-8')
+    header = (ROOT / 'recovery_ui/include/recovery_ui/screen_ui.h').read_text(encoding='utf-8')
+    fastboot = (ROOT / 'fastboot/fastboot.cpp').read_text(encoding='utf-8')
+    menu_definitions = '\n'.join(function(screen, signature) for signature in (
+        'Menu::Menu(', 'int Menu::selection() const', 'TextMenu::TextMenu(',
+        'const std::vector<std::string>& TextMenu::text_headers() const',
+        'std::string TextMenu::TextItem(', 'size_t TextMenu::MenuStart() const',
+        'size_t TextMenu::MenuEnd() const', 'size_t TextMenu::ItemsCount() const',
+        'bool TextMenu::ItemsOverflow(', 'int TextMenu::Select(', 'int TextMenu::SelectVisible(',
+        'int TextMenu::Scroll(', 'bool TextMenu::DashboardCandidate() const',
+        'std::string TextMenu::PageTitle() const', 'int TextMenu::DrawHeader(',
+        'void TextMenu::SetViewport(', 'void TextMenu::SetMenuHeight(',
+        'int TextMenu::DrawItems(', 'int TextMenu::HitTest('))
+    actions = fastboot[fastboot.index('static const std::vector'):fastboot.index('void FillDefaultFastbootLines')]
+    return r'''
+#include <map>
+#include <cstdarg>
+namespace FastbootFlow {
+namespace android::base {
+std::map<std::string,std::string> properties;
+std::string GetProperty(const std::string& key,const std::string& fallback) {
+  auto found=properties.find(key);return found==properties.end()?fallback:found->second;
+}
+bool EqualsIgnoreCase(std::string a,std::string b) {
+  std::transform(a.begin(),a.end(),a.begin(),::tolower);
+  std::transform(b.begin(),b.end(),b.begin(),::tolower);return a==b;
+}
+std::string StringPrintf(const char* format,...) {
+  char result[256];va_list args;va_start(args,format);vsnprintf(result,sizeof(result),format,args);
+  va_end(args);return result;
+}
+}
+struct RecoveryUI {
+  enum class KeyError : int {TIMED_OUT=-1,INTERRUPTED=-2};
+  bool wearable=false,logo=false,reset=false,visible=false;
+  size_t chosen=0;std::vector<std::string> details,items;
+  bool IsWearable(){return wearable;}void SetEnableFastbootdLogo(bool value){logo=value;}
+  void ResetKeyInterruptStatus(){reset=true;}void SetTitle(const std::vector<std::string>& value){details=value;}
+  void ShowText(bool value){visible=value;}
+  size_t ShowMenu(const std::vector<std::string>& headers,const std::vector<std::string>& value,
+      size_t initial,bool menu_only,const std::function<int(int,bool)>& handler) {
+    assert(headers.empty() && initial==0 && !menu_only && handler(7,true)==7);
+    items=value;return chosen;
+  }
+};
+struct Device {
+  enum BuiltinAction {NO_ACTION,REBOOT_FROM_FASTBOOT,ENTER_RECOVERY,REBOOT_BOOTLOADER,
+                     SHUTDOWN_FROM_FASTBOOT,KEY_INTERRUPTED};
+  RecoveryUI ui;bool started=false;RecoveryUI* GetUI(){return &ui;}
+  void StartFastboot(){started=true;}int HandleMenuKey(int key,bool){return key;}
+};
+int bcb_clears=0;bool clear_bootloader_message(std::string*){++bcb_clears;return true;}
+#define LOG(...) std::cout
+''' + actions + '\n' + '\n'.join(function(fastboot, signature) for signature in (
+        'void FillDefaultFastbootLines(', 'void FillWearableFastbootLines(',
+        'Device::BuiltinAction StartFastboot(')) + r'''
+#undef LOG
+enum class UIElement {SCROLLBAR};
+class DrawInterface {
+ public:
+  virtual ~DrawInterface()=default;
+  virtual int MenuItemHeight() const=0;virtual int MenuItemSpacing() const=0;
+  virtual int DrawMenuPrompt(int,int,const std::vector<std::string>&) const=0;
+  virtual int DrawDashboard(int,int,int,int,bool) const=0;
+  virtual void DrawMenuCard(int,int,const std::string&,bool,bool,bool,bool) const=0;
+  virtual void SetColor(UIElement) const=0;virtual void DrawScrollBar(int,int) const=0;
+};
+''' + function(header, 'class Menu {') + ';\n' + function(header, 'class TextMenu :') + r''';
+#define CHECK(condition) assert(condition)
+#define CHECK_LT(a,b) assert((a)<(b))
+#define CHECK_LE(a,b) assert((a)<=(b))
+// Inherited TextMenu selection/scroll code uses Android's signedness warning policy.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-compare"
+''' + menu_definitions + r'''
+#pragma GCC diagnostic pop
+#undef CHECK
+#undef CHECK_LT
+#undef CHECK_LE
+struct Drawing : DrawInterface {
+  PixelCanvas& canvas;int width;mutable std::vector<Rect> cards;
+  Drawing(PixelCanvas& c,int w):canvas(c),width(w){}
+  int MenuItemHeight() const override{return design::LayoutMetrics(width).row_height;}
+  int MenuItemSpacing() const override{return design::LayoutMetrics(width).gap;}
+  int DrawMenuPrompt(int,int,const std::vector<std::string>&) const override{return 0;}
+  int DrawDashboard(int,int,int,int,bool) const override{return 0;}
+  void SetColor(UIElement) const override{}void DrawScrollBar(int,int) const override{}
+  void DrawMenuCard(int y,int w,const std::string& item,bool selected,bool active,bool first,bool last) const override {
+    cards.push_back(design::LayoutMetrics(w).Card(y));
+    design::Card(canvas,w,y,item,selected,active,first,last);
+  }
+};
+void EntryFlow() {
+  static bool checked=false;if(checked)return;checked=true;
+  android::base::properties={{"ro.product.device","astonc"},{"ro.uwu.release","17.0.130"},
+    {"ro.serialno","host-example"},{"ro.secure","1"},{"ro.bootloader","sample-bootloader"}};
+  const std::vector<Device::BuiltinAction> normal{Device::REBOOT_FROM_FASTBOOT,Device::REBOOT_BOOTLOADER,
+      Device::ENTER_RECOVERY,Device::SHUTDOWN_FROM_FASTBOOT};
+  const std::vector<Device::BuiltinAction> wearable{Device::REBOOT_FROM_FASTBOOT,Device::ENTER_RECOVERY,
+      Device::REBOOT_BOOTLOADER,Device::SHUTDOWN_FROM_FASTBOOT};
+  for(bool wear:{false,true})for(size_t index=0;index<4;++index) {
+    Device d;d.ui.wearable=wear;d.ui.chosen=index;
+    assert(StartFastboot(&d,{})==(wear?wearable:normal)[index]);
+    assert(d.started && d.ui.reset && d.ui.visible && d.ui.logo==!wear);
+    if(!wear) {
+      assert(d.ui.items==std::vector<std::string>({"Reboot system now","Reboot to bootloader","Enter recovery","Power off"}));
+      auto info=ReadDeviceInfo(d.ui.details);assert(info.product=="astonc" && info.version=="17.0.130");
+      assert(std::find(d.ui.details.begin(),d.ui.details.end(),"Serial number - host-example")!=d.ui.details.end());
+      assert(std::find(d.ui.details.begin(),d.ui.details.end(),"Secure boot - yes")!=d.ui.details.end());
+    } else assert(d.ui.items[1]=="Enter recovery" && d.ui.details.front()=="Android Fastboot");
+  }
+  for(auto [key,action]:std::vector<std::pair<RecoveryUI::KeyError,Device::BuiltinAction>>{
+      {RecoveryUI::KeyError::INTERRUPTED,Device::KEY_INTERRUPTED},{RecoveryUI::KeyError::TIMED_OUT,Device::NO_ACTION}}) {
+    Device d;d.ui.chosen=static_cast<size_t>(key);assert(StartFastboot(&d,{})==action);
+  }
+  for(const char* key:{"ro.uwu.release","ro.uwu.build.version","ro.lineage.build.version","ro.build.version.incremental"}) {
+    android::base::properties.erase("ro.uwu.release");android::base::properties.erase("ro.uwu.build.version");
+    android::base::properties.erase("ro.lineage.build.version");android::base::properties.erase("ro.build.version.incremental");
+    android::base::properties[key]="fallback-version";std::vector<std::string> details;FillDefaultFastbootLines(details);
+    assert(ReadDeviceInfo(details).version=="fallback-version");
+  }
+  android::base::properties["ro.uwu.release"]="17.0.130";
+  std::cout<<"PASS: actual fastboot entry, live metadata mapping, wearable order, four actions, timeout and interrupt\n";
+}
+void Render(PixelCanvas& canvas,int w,int h) {
+  EntryFlow();Device d;StartFastboot(&d,{});
+  design::Header(canvas,w,h,design::Page::Fastboot);design::FastbootStatus(canvas,w,h);
+  Drawing drawing(canvas,w);TextMenu menu(true,0,{},d.ui.items,0,0,drawing);
+  assert(menu.PageTitle()=="FastbootD" && menu.IsMain());
+  int top=design::MenuTop(w,h,design::Page::Fastboot),available=design::FooterTop(w,h)-Dp(w,10)-top;
+  menu.SetViewport(w,available);assert(menu.MenuEnd()-menu.MenuStart()>=2);
+  assert(menu.DrawItems(0,top,w,false)<=available);
+  design::Footer(canvas,w,h,d.ui.details);
+  assert(canvas.Has(Tr("Ready for operation")) && canvas.Has("17.0.130"));
+  // Walk every real menu action, including scrolling to the last row on small screens.
+  PixelCanvas navigation(w,h);Drawing nav_drawing(navigation,w);
+  TextMenu nav(true,0,{},d.ui.items,0,0,nav_drawing);nav.SetViewport(w,available);
+  for(int index=0;index<4;++index) {
+    assert(nav.Select(index)==index);nav_drawing.cards.clear();
+    assert(nav.DrawItems(0,top,w,true)<=available);
+    for(size_t row=0;row<nav_drawing.cards.size();++row) {
+      auto b=nav_drawing.cards[row];int hit=nav.HitTest(b.x+b.w/2,b.y-top+b.h/2,w);
+      assert(hit==static_cast<int>(row));
+      int logical=nav.SelectVisible(hit);assert(logical==static_cast<int>(nav.MenuStart()+row));
+      assert(d.ui.items[logical]==nav.TextItem(logical));
+      assert(nav.HitTest(b.x+b.w/2,b.y-top-1,w)==-1);
+      assert(nav.HitTest(b.x,b.y-top,w)==-1);
+    }
+  }
+  nav.Select(0);nav.Scroll(1);nav_drawing.cards.clear();
+  assert(nav.DrawItems(0,top,w,false)<=available);
+  assert(nav.selection()>=static_cast<int>(nav.MenuStart()) && nav.selection()<static_cast<int>(nav.MenuEnd()));
+  nav.Scroll(-1);assert(nav.MenuStart()==0);
+  assert(nav.Select(4)==0 && nav.Select(-1)==3);
+  TextMenu confirmation(true,0,{"Confirm"},d.ui.items,0,0,nav_drawing);
+  assert(confirmation.PageTitle()=="Confirm or select");
+}
+} // namespace FastbootFlow
+'''
+
+
 def compile_android(clang, build):
     source = (ROOT / 'recovery_ui/screen_ui.cpp').read_text(encoding='utf-8')
     unit = '''#include "recovery_ui/screen_ui.h"
@@ -246,6 +414,7 @@ static void M3eSetColor(recovery_m3e::Color) {}
                       'void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(',
                       'void ScreenRecoveryUI::draw_battery_capacity_locked()',
                       'bool TextMenu::DashboardCandidate() const',
+                      'std::string TextMenu::PageTitle() const',
                       'void TextMenu::SetMenuHeight(',
                       'int TextMenu::DrawItems(',
                       'int TextMenu::HitTest(',
@@ -263,6 +432,25 @@ static void M3eSetColor(recovery_m3e::Color) {}
     subprocess.run(flags + [str(path), '-o', str(build / 'android-install-ui.o')], check=True)
     subprocess.run(flags + [str(ROOT / 'tools/m3e/test_install_ui.cpp'), '-o',
                             str(build / 'android-install-renderer.o')], check=True)
+    fastboot = (ROOT / 'fastboot/fastboot.cpp').read_text(encoding='utf-8')
+    entry = '''#include "recovery_ui/device.h"
+#include <algorithm>
+#include <functional>
+#include <iostream>
+namespace android::base {
+std::string GetProperty(const std::string&,const std::string&);
+bool EqualsIgnoreCase(const std::string&,const std::string&);
+}
+bool clear_bootloader_message(std::string*);
+#define LOG(...) std::cout
+'''
+    entry += fastboot[fastboot.index('static const std::vector'):fastboot.index('void FillDefaultFastbootLines')]
+    entry += '\n'.join(function(fastboot, signature) for signature in (
+        'void FillDefaultFastbootLines(', 'void FillWearableFastbootLines(',
+        'Device::BuiltinAction StartFastboot('))
+    entry_path = build / 'android-fastboot-entry.cpp'
+    entry_path.write_text(entry, encoding='utf-8')
+    subprocess.run(flags + [str(entry_path), '-o', str(build / 'android-fastboot-entry.o')], check=True)
     print('PASS: Android arm64 object compilation; real UI class headers and canvas, minui API declarations')
 
 
@@ -271,6 +459,7 @@ def run(cxx, out, ndk_clang=None):
     with tempfile.TemporaryDirectory(prefix='m3e-install-') as temp:
         build = Path(temp)
         (build / 'install_routing.inc').write_text(routing_test(), encoding='utf-8')
+        (build / 'fastboot_flow.inc').write_text(fastboot_flow(), encoding='utf-8')
         exe = build / ('test.exe' if os.name == 'nt' else 'test')
         subprocess.run([cxx, '-std=c++17', '-O1', '-Wall', '-Wextra', '-Werror',
                         '-DM3E_INSTALL_ROUTING_TEST', '-I' + str(ROOT / 'recovery_ui/include'),

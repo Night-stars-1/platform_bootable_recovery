@@ -315,6 +315,8 @@ bool TextMenu::DashboardCandidate() const {
   return text_headers_.empty() && text_items_ == main_items;
 }
 std::string TextMenu::PageTitle() const {
+  if (text_headers_.empty() && text_items_ == std::vector<std::string>{
+      "Reboot system now", "Reboot to bootloader", "Enter recovery", "Power off"}) return "FastbootD";
   if (text_headers_.size() == 1) {
     if (text_headers_[0] == "ADB Sideload" || text_headers_[0] == "Install result" ||
         text_headers_[0] == "Flash result" || text_headers_[0] == "Flash partition image") return text_headers_[0];
@@ -349,7 +351,7 @@ void TextMenu::SetMenuHeight(int height) {
       recovery_m3e::design::Home(screen_width_, 0, viewport_height_).valid;
   int row = draw_funcs_.MenuItemHeight(), gap = draw_funcs_.MenuItemSpacing();
   auto page = recovery_m3e::design::MenuPage(DashboardCandidate(), PageTitle());
-  int reserved = page == recovery_m3e::design::Page::Reboot ? recovery_m3e::Dp(screen_width_,27) : 0;
+  int reserved = recovery_m3e::design::SeparatePower(page) ? recovery_m3e::Dp(screen_width_,27) : 0;
   size_t visible = dashboard_ ? 5 : recovery_m3e::VisibleCount(viewport_height_ - reserved, row, gap);
   if (!calibrated_height_ || visible != max_display_items_) {
     max_display_items_ = visible;
@@ -366,10 +368,10 @@ int TextMenu::DrawItems(int /*x*/, int y, int screen_width, bool long_press) con
   auto page = recovery_m3e::design::MenuPage(DashboardCandidate(), PageTitle());
   for (size_t i = MenuStart(); i < MenuEnd(); ++i) {
     bool selected = static_cast<int>(i) == selection();
-    bool separate = page == recovery_m3e::design::Page::Reboot && i + 1 == ItemsCount();
+    bool separate = recovery_m3e::design::SeparatePower(page) && i + 1 == ItemsCount();
     if (i > MenuStart()) offset += recovery_m3e::design::ExtraGap(screen_width, page, separate);
     draw_funcs_.DrawMenuCard(y + offset, screen_width, TextItem(i), selected, selected && long_press,
-        i == 0 || separate, i + 1 == ItemsCount() || (page == recovery_m3e::design::Page::Reboot && i + 2 == ItemsCount()));
+        i == 0 || separate, i + 1 == ItemsCount() || (recovery_m3e::design::SeparatePower(page) && i + 2 == ItemsCount()));
     offset += height + spacing;
   }
   if (MenuEnd() > MenuStart()) offset -= spacing;
@@ -1117,8 +1119,10 @@ std::vector<std::string> ScreenRecoveryUI::GetMenuHelpMessage() const {
 // Redraws everything on the screen. Does not flip pages. Should only be called with updateMutex
 // locked.
 bool ScreenRecoveryUI::IsDesignMenuLocked() const {
-  return menu_ && !fastbootd_logo_enabled_ && !pattern_input_ &&
-      recovery_m3e::design::MenuPage(menu_->DashboardCandidate(),menu_->PageTitle()) != recovery_m3e::design::Page::None;
+  if (!menu_ || pattern_input_) return false;
+  auto page = recovery_m3e::design::MenuPage(menu_->DashboardCandidate(),menu_->PageTitle());
+  return fastbootd_logo_enabled_ ? page == recovery_m3e::design::Page::Fastboot :
+      page != recovery_m3e::design::Page::None && page != recovery_m3e::design::Page::Fastboot;
 }
 bool ScreenRecoveryUI::IsDesignAdbLocked() const {
   return IsInstallPageLocked() && recovery_m3e::design::AdbPage(m3e_adb_sideload_,m3e_install_stage_);
@@ -1161,6 +1165,7 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(const std::vector<std::s
       using namespace recovery_m3e;
       auto page=design::MenuPage(menu_->DashboardCandidate(),menu_->PageTitle());
       design::Header(canvas,ScreenWidth(),ScreenHeight(),page,menu_->selection()==-1);
+      if (page==design::Page::Fastboot) design::FastbootStatus(canvas,ScreenWidth(),ScreenHeight());
       menu_start_y_=design::MenuTop(ScreenWidth(),ScreenHeight(),page);
       m3e_menu_bottom_=design::FooterTop(ScreenWidth(),ScreenHeight())-Dp(ScreenWidth(),10);
       menu_->SetViewport(ScreenWidth(),std::max(0,m3e_menu_bottom_-menu_start_y_));

@@ -7,12 +7,13 @@
 #include "install_status.h"
 
 namespace recovery_m3e::design {
-// Only the pages shown in recovery-design-1.svg opt into this presentation.
-enum class Page { None, Home, Reboot, Sources };
+// Only the pages shown in recovery-design-1.svg and fastbootd.svg opt in.
+enum class Page { None, Home, Reboot, Sources, Fastboot };
 inline Page MenuPage(bool dashboard,const std::string& title) {
   if(dashboard) return Page::Home;
   if(title=="Reboot options") return Page::Reboot;
   if(title=="Install update") return Page::Sources;
+  if(title=="FastbootD") return Page::Fastboot;
   return Page::None;
 }
 inline bool AdbPage(bool adb,recovery_ui::InstallStage stage) {
@@ -27,7 +28,21 @@ inline Metrics LayoutMetrics(int width) {
 inline Rect Back(int width) {return {Dp(width,27),Dp(width,28),Dp(width,33),Dp(width,33)};}
 inline int FooterTop(int width,int height) {return height-Dp(width,55);}
 inline int TitleTop(int width,int height) {return Dp(width,height<Dp(width,600)?65:112);}
+struct FastbootLayout {Rect status;int heading,menu;bool compact;};
+inline FastbootLayout Fastboot(int width,int height) {
+  auto m=LayoutMetrics(width);bool compact=height<Dp(width,440);
+  int top=TitleTop(width,height)+Dp(width,compact?40:70);
+  int gap=Dp(width,compact?5:54),bottom=FooterTop(width,height)-Dp(width,10);
+  int minimum=std::max(Dp(width,24),FontLineHeight(Font::DesignMenu,width));
+  // Shrink the status card to keep all destinations visible where possible.
+  // Short screens retain at least two rows and scroll through the same actions.
+  int rows=std::clamp(VisibleCount(bottom-top-gap-minimum-Dp(width,27),m.row_height,m.gap),2,4);
+  int reserve=rows*m.row_height+(rows-1)*m.gap+Dp(width,27);
+  int panel=std::min(Dp(width,166),std::max(minimum,bottom-top-gap-reserve));
+  return {{m.inset,top,width-2*m.inset,panel},top+panel+Dp(width,26),top+panel+gap,compact};
+}
 inline int MenuTop(int width,int height,Page page) {
+  if(page==Page::Fastboot)return Fastboot(width,height).menu;
   return TitleTop(width,height)+Dp(width,page==Page::Home?71:39);
 }
 using Glyph=fontdata::Symbol;
@@ -96,12 +111,12 @@ inline void Footer(Canvas& c,int width,int height,const std::vector<std::string>
 inline void Header(Canvas& c,int width,int height,Page page,bool back_selected=false,
                    const std::string& override_title={}) {
   Metrics m(width);
-  if(page!=Page::Home) {
+  if(page!=Page::Home && page!=Page::Fastboot) {
     auto b=Back(width);Surface(c,b,b.h/2,surface,back_selected,text,Dp(width,1));
     Symbol(c,Inset(b,Dp(width,7)),Glyph::Back);
   }
   int y=TitleTop(width,height);
-  if(page==Page::Home) {
+  if(page==Page::Home || page==Page::Fastboot) {
     int x=Dp(width,29);std::string brand="uwuAOSP";
     for(size_t i=0;i<brand.size();++i) {
       std::string letter=brand.substr(i,1);
@@ -109,12 +124,21 @@ inline void Header(Canvas& c,int width,int height,Page page,bool back_selected=f
       x+=TextWidth(letter,FontPixels(Font::DesignBrand,width),true, false, FaceFor(Font::DesignBrand));
     }
     x+=Dp(width,6);
-    Label(c,m,x,y,width-x-Dp(width,20),"Recovery",Font::DesignRecoveryTitle,text,true);
+    Label(c,m,x,y,width-x-Dp(width,20),page==Page::Fastboot?"fastbootD":"Recovery",Font::DesignRecoveryTitle,text,true);
   } else {
     std::string title=override_title.empty()?(page==Page::Reboot?"Reboot to...":"Install or update by..."):override_title;
     if(GetLanguage()==Language::Chinese && override_title.empty())title=Tr(page==Page::Reboot?"Reboot options":"Install update");
     Label(c,m,Dp(width,21),y,width-Dp(width,42),title,Font::DesignTitle,text,true);
   }
+}
+inline void FastbootStatus(Canvas& c,int width,int height) {
+  auto layout=Fastboot(width,height);auto b=layout.status;Metrics m(width);
+  Rounded(c,b,Dp(width,22),surface);
+  auto label=FitText(Tr("Ready for operation"),b.w-Dp(width,24),FontPixels(Font::DesignMenu,width),false,false,Face::Flex);
+  c.Text(b.x+(b.w-TextWidth(label,FontPixels(Font::DesignMenu,width),false,false,Face::Flex))/2,
+      b.y+(b.h-FontLineHeight(Font::DesignMenu,width))/2,label,Font::DesignMenu,text,false);
+  if(!layout.compact)Label(c,m,Dp(width,24),layout.heading,width-Dp(width,48),
+      GetLanguage()==Language::Chinese?Tr("Reboot options"):"Reboot to...",Font::DesignTitle,text);
 }
 struct HomeLayout {std::array<Rect,5> buttons;int height;bool valid;};
 inline HomeLayout Home(int width,int top,int available) {
@@ -156,7 +180,8 @@ inline int Dashboard(Canvas& c,int width,int top,int available,int selected,bool
   }
   return layout.height;
 }
-inline int ExtraGap(int width,Page page,bool before_last) {return page==Page::Reboot && before_last?Dp(width,27):0;}
+inline bool SeparatePower(Page page) {return page==Page::Reboot || page==Page::Fastboot;}
+inline int ExtraGap(int width,Page page,bool before_last) {return SeparatePower(page) && before_last?Dp(width,27):0;}
 inline CornerRadii Corners(int width,bool first,bool last) {return {Dp(width,first?17:3),Dp(width,last?17:3)};}
 inline void Card(Canvas& c,int width,int y,const std::string& name,bool selected,bool active,
                  bool first,bool last) {
@@ -167,7 +192,7 @@ inline void Card(Canvas& c,int width,int y,const std::string& name,bool selected
   if(name=="Reboot system now") {glyph=Glyph::Android;color=green;label="System";}
   else if(name=="Enter fastboot") {glyph=Glyph::Warning;color={255,0,64};label="FastbootD";}
   else if(name=="Reboot to bootloader") {glyph=Glyph::Chip;label="Bootloader";}
-  else if(name=="Reboot to recovery") {glyph=Glyph::Refresh;label="Recovery";}
+  else if(name=="Reboot to recovery" || name=="Enter recovery") {glyph=Glyph::Refresh;label="Recovery";}
   else if(name=="Apply from ADB") {glyph=Glyph::Android;color=green;label="adb sideload";arrow=true;}
   else if(name=="Choose ZIP from internal storage") {label="package from local storage";arrow=true;}
   else if(name=="Power off")Symbol(c,{ix,iy,icon,icon},Glyph::Power);
@@ -189,9 +214,9 @@ inline void Card(Canvas& c,int width,int y,const std::string& name,bool selected
 inline int HitList(int width,Page page,int count,int first,int total,int x,int y) {
   auto m=LayoutMetrics(width);int top=0;
   for(int row=0;row<count;++row) {
-    int index=first+row;bool separate=page==Page::Reboot && index==total-1;
+    int index=first+row;bool separate=SeparatePower(page) && index==total-1;
     if(row>0)top+=ExtraGap(width,page,separate);
-    bool bottom=index+1==total || (page==Page::Reboot && index+2==total);
+    bool bottom=index+1==total || (SeparatePower(page) && index+2==total);
     if(InRounded(m.Card(top),Corners(width,index==0 || separate,bottom),x,y))return row;
     top+=m.Pitch();
   }

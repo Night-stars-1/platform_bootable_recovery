@@ -80,6 +80,10 @@ constexpr InstallStage stages[]={InstallStage::WAITING,InstallStage::VERIFYING,
     InstallStage::INSTALLING,InstallStage::SUCCESS,InstallStage::ERROR,InstallStage::CANCELLED};
 const char* names[]={"waiting","verifying","installing","success","error","cancelled"};
 
+#ifdef M3E_INSTALL_ROUTING_TEST
+#include "fastboot_flow.inc"
+#endif
+
 void Render(const std::string& out,int w,int h,bool zh,int index,bool pixels=false) {
   SetScaleBasis(w,h);SetLanguage(zh?Language::Chinese:Language::English);
   PixelCanvas c(w,h,pixels);Metrics m(w);auto p=Palette::ForMode(false);p.background={0,0,0};
@@ -201,7 +205,15 @@ void RenderDesign(const std::string& out,int w,int h,bool zh,int page,bool pixel
   SetScaleBasis(w,h);SetLanguage(zh?Language::Chinese:Language::English);
   PixelCanvas c(w,h,pixels);c.Fill({0,0,w,h},design::background);
   const std::vector<std::string> details{"Product name - astonc","Version 17.0.130 (2026-10-05)"};
-  if(page>=3 && page<=4)design::Adb(c,w,h,page==3,0.04,true,
+  if(page==6) {
+#ifdef M3E_INSTALL_ROUTING_TEST
+    FastbootFlow::Render(c,w,h);
+#else
+    design::Header(c,w,h,design::Page::Fastboot);design::FastbootStatus(c,w,h);
+    design::Footer(c,w,h,details);
+#endif
+  }
+  else if(page>=3 && page<=4)design::Adb(c,w,h,page==3,0.04,true,
       page==3?std::vector<std::string>{}:std::vector<std::string>{"Finding package...","Verifying package...","Installing updates","Step 1/2"},details);
   else if(page==5)terminal::Draw(c,w,h,"ls /system/bin",{"# pwd","/","# ls /system/bin"},false,false,-1);
   else {
@@ -256,10 +268,10 @@ int main(int argc,char** argv) {
     for(bool zh:{false,true}) {
       for(int i=0;i<6;++i)Render(out,w,h,zh,i);
       for(int count:{1,2,4})for(int first=0;first<count;++first)RenderList(out,w,h,zh,count,first);
-      for(int page=0;page<6;++page)RenderDesign(out,w,h,zh,page);
+      for(int page=0;page<7;++page)RenderDesign(out,w,h,zh,page);
     }
   for(bool zh:{false,true})for(int i=0;i<6;++i)Render(out,1220,2712,zh,i,true);
   for(bool zh:{false,true})for(int count:{1,2,4})RenderList(out,1220,2712,zh,count,0,true);
-  for(bool zh:{false,true})for(int page=0;page<6;++page)RenderDesign(out,1220,2712,zh,page,true);
+  for(bool zh:{false,true})for(int page=0;page<7;++page)RenderDesign(out,1220,2712,zh,page,true);
   std::cout<<"PASS: six stages, two languages, seven screen sizes, grouped lists with selection, scrolling and matching touch geometry\n";
 }

@@ -16,6 +16,8 @@ inline bool SupportedLocale(const std::string& locale) { return locale == "en-US
 inline Language LanguageForLocale(const std::string& locale) { return locale.rfind("zh", 0) == 0 ? Language::Chinese : Language::English; }
 struct Translation { std::string_view key, chinese; };
 inline constexpr Translation kTranslations[] = {
+  {"Ready for operation","准备就绪"},
+  {"Enter recovery","Recovery"},
   {"Recovery","恢复模式"},
   {"Install update","安装更新"},
   {"Choose an update method","选择更新方式"},
