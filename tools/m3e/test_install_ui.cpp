@@ -18,7 +18,9 @@ using namespace recovery_m3e;
 
 struct PixelCanvas : Canvas {
   struct Run { Rect bounds; std::string text; Color color; };
+  struct MaskRun {Rect bounds,ink;};
   int width,height;bool pixels;std::vector<uint8_t> rgb;std::vector<Run> runs;
+  bool text_mask=false;std::vector<MaskRun> symbol_masks;
   PixelCanvas(int w,int h,bool draw=false):width(w),height(h),pixels(draw),rgb(draw?w*h*3:0) {}
   void Fill(Rect b,Color c) override {
     assert(b.x>=0 && b.y>=0 && b.w>=0 && b.h>=0);
@@ -35,11 +37,20 @@ struct PixelCanvas : Canvas {
     runs.push_back({b,s,c});
     if(!pixels) return;
     auto raster=RasterText(s,FontPixels(f,width),bold,Monospace(f),FaceFor(f));
+    text_mask=true;
     Mask({x,y,raster.width,raster.height},raster.alpha,c);
+    text_mask=false;
   }
   void Mask(Rect b,const std::vector<uint8_t>& alpha,Color c) override {
     assert(b.x>=0 && b.y>=0 && b.w>=0 && b.h>=0 && b.x+b.w<=width && b.y+b.h<=height);
     assert(alpha.size()==static_cast<size_t>(b.w*b.h));
+    if(!text_mask) {
+      int left=b.w,top=b.h,right=0,bottom=0;
+      for(int y=0;y<b.h;++y)for(int x=0;x<b.w;++x)if(alpha[y*b.w+x]) {
+        left=std::min(left,x);top=std::min(top,y);right=std::max(right,x+1);bottom=std::max(bottom,y+1);
+      }
+      symbol_masks.push_back({b,{b.x+left,b.y+top,right-left,bottom-top}});
+    }
     if(!pixels)return;
     for(int sy=0;sy<b.h;++sy)for(int sx=0;sx<b.w;++sx) {
       int dx=b.x+sx,dy=b.y+sy;if(dx<0||dy<0||dx>=width||dy>=height)continue;
@@ -221,6 +232,12 @@ void RenderDesign(const std::string& out,int w,int h,bool zh,int page,bool pixel
     design::Footer(c,w,h,details);
   }
   if(page!=5)design::Battery(c,w,82,false);
+  // Check visible icon alignment in every complete page, including small screens.
+  for(const auto& mask:c.symbol_masks) {
+    assert(mask.ink.w>0 && mask.ink.h>0);
+    assert(std::abs((mask.ink.x+mask.ink.w/2.0)-(mask.bounds.x+mask.bounds.w/2.0))<=1);
+    assert(std::abs((mask.ink.y+mask.ink.h/2.0)-(mask.bounds.y+mask.bounds.h/2.0))<=1);
+  }
   // Check the font selection as part of the complete bilingual page flow.
   assert(FaceFor(Font::DesignBrand)==Face::Outfit && FaceFor(Font::DesignRecoveryTitle)==Face::Flex);
   assert(FaceFor(Font::Code)==Face::Code && FaceFor(Font::DesignMenu)==Face::Flex);

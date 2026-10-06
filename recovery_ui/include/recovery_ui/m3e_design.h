@@ -31,22 +31,32 @@ inline int MenuTop(int width,int height,Page page) {
   return TitleTop(width,height)+Dp(width,page==Page::Home?71:39);
 }
 using Glyph=fontdata::Symbol;
-inline void Symbol(Canvas& c,Rect b,Glyph glyph,Color color=text,bool filled=false) {
+struct SymbolMask {std::vector<uint8_t> alpha;Rect ink;};
+inline void Symbol(Canvas& c,Rect b,Glyph glyph,Color color=text,bool filled=false,int pixels=0) {
   const auto& g=filled?fontdata::kSymbolsBold[static_cast<int>(glyph)]:fontdata::kSymbolsRegular[static_cast<int>(glyph)];
   static const auto masks=[] {
     constexpr int count=sizeof(fontdata::kSymbolsRegular)/sizeof(fontdata::Glyph);
-    std::array<std::vector<uint8_t>,count*2> result;
-    for(int style=0;style<2;++style)for(int index=0;index<count;++index)
-      result[style*count+index]=DecodeGlyph(style?fontdata::kSymbolsBold[index]:fontdata::kSymbolsRegular[index],
-          style?fontdata::kSymbolsBoldData:fontdata::kSymbolsRegularData);
+    std::array<SymbolMask,count*2> result;
+    for(int style=0;style<2;++style)for(int index=0;index<count;++index) {
+      const auto& glyph=style?fontdata::kSymbolsBold[index]:fontdata::kSymbolsRegular[index];
+      auto& mask=result[style*count+index];
+      mask.alpha=DecodeGlyph(glyph,style?fontdata::kSymbolsBoldData:fontdata::kSymbolsRegularData);
+      int left=glyph.w,top=glyph.h,right=0,bottom=0;
+      for(int y=0;y<glyph.h;++y)for(int x=0;x<glyph.w;++x)if(mask.alpha[y*glyph.w+x]) {
+        left=std::min(left,x);top=std::min(top,y);right=std::max(right,x+1);bottom=std::max(bottom,y+1);
+      }
+      mask.ink={left,top,std::max(0,right-left),std::max(0,bottom-top)};
+    }
     return result;
   }();
   const auto& mask=masks[(filled?sizeof(fontdata::kSymbolsRegular)/sizeof(fontdata::Glyph):0)+static_cast<int>(glyph)];
   std::vector<uint8_t> alpha(std::max(0,b.w*b.h));
-  double scale=double(std::min(b.w,b.h))/fontdata::kSize;
+  double scale=double(pixels>0?pixels:std::min(b.w,b.h))/fontdata::kSize;
   if(scale<=0)return;
-  double left=(b.w-g.w*scale)/2,top=(b.h-g.h*scale)/2;
-  auto sample=[&](int x,int y)->double {return x<0 || y<0 || x>=g.w || y>=g.h?0:mask[y*g.w+x];};
+  // Font bounds include advance/baseline whitespace. Center only visible ink.
+  double left=(b.w-mask.ink.w*scale)/2-mask.ink.x*scale;
+  double top=(b.h-mask.ink.h*scale)/2-mask.ink.y*scale;
+  auto sample=[&](int x,int y)->double {return x<0 || y<0 || x>=g.w || y>=g.h?0:mask.alpha[y*g.w+x];};
   for(int y=0;y<b.h;++y)for(int x=0;x<b.w;++x) {
     double sx=(x+0.5-left)/scale-0.5,sy=(y+0.5-top)/scale-0.5;
     int ix=std::floor(sx),iy=std::floor(sy);double ax=sx-ix,ay=sy-iy;
@@ -56,7 +66,10 @@ inline void Symbol(Canvas& c,Rect b,Glyph glyph,Color color=text,bool filled=fal
   }
   c.Mask(b,alpha,color);
 }
-inline void Chevron(Canvas& c,Rect b,Color color=text) {Symbol(c,b,Glyph::Chevron,color);}
+inline void Chevron(Canvas& c,Rect b,Color color=text) {
+  // Use the entire round button for positioning, keeping font size separate.
+  Symbol(c,b,Glyph::Chevron,color,false,std::min(b.w,b.h)*5/6);
+}
 inline void Battery(Canvas& c,int width,int capacity,bool charging) {
   Metrics m(width);int h=Dp(width,28),pad=Dp(width,9),icon=Dp(width,18);
   std::string value=capacity>=0 && capacity<=100?std::to_string(capacity)+"%":"--%";
@@ -134,7 +147,7 @@ inline int Dashboard(Canvas& c,int width,int top,int available,int selected,bool
     else Symbol(c,ib,Glyph::Trash);
     int circle=Dp(width,27);
     Rect cb{b.x+b.w-Dp(width,i>=3?17:19)-circle,b.y+(i<=1?(b.h-circle)/2:b.h-Dp(width,53)),circle,circle};
-    Rounded(c,cb,circle/2,arrows[i]);Chevron(c,Inset(cb,Dp(width,7)));
+    Rounded(c,cb,circle/2,arrows[i]);Chevron(c,cb);
     int tx=b.x+pad+(i==0?Dp(width,46):i==1?Dp(width,42):0);
     int ty=i<=1?b.y+(b.h-FontLineHeight(Font::DesignTitle,width))/2:b.y+b.h-Dp(width,53);
     std::string label=labels[i];
@@ -166,7 +179,7 @@ inline void Card(Canvas& c,int width,int y,const std::string& name,bool selected
   int right=b.x+b.w-pad;
   if(arrow) {
     int circle=Dp(width,24);Rect cb{right-circle,b.y+(b.h-circle)/2,circle,circle};
-    Rounded(c,cb,circle/2,{54,55,59});Chevron(c,Inset(cb,Dp(width,7)));right=cb.x-Dp(width,12);
+    Rounded(c,cb,circle/2,{54,55,59});Chevron(c,cb);right=cb.x-Dp(width,12);
   }
   int tx=ix+icon+Dp(width,20);
     Font font=label=="package from local storage"?Font::Source:Font::DesignMenu;
