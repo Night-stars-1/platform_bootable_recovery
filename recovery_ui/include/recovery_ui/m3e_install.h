@@ -28,11 +28,11 @@ inline int DrawInstallHeader(Canvas& c,const Metrics& m,int top,int bottom,int m
   if(menu_rows>0) {
     Surface(c,back,back.h/2,p.surface,back_selected,p.text,Dp(m.width,2));
     DrawIcon(c,Inset(back,Dp(m.width,14)),Icon::Back,p.text);
-    x+=back.w+Dp(m.width,12);
+    x=back.x+back.w+Dp(m.width,12);
   }
-  Label(c,m,x,top+Dp(m.width,13),m.width-m.inset-x-Dp(m.width,90),
+  Label(c,m,x,back.y+Dp(m.width,13),m.width-m.inset-x-Dp(m.width,90),
         title,Font::Menu,p.text,true);
-  return top+back.h+Dp(m.width,12);
+  return back.y+back.h+Dp(m.width,12);
 }
 
 inline InstallLayout InstallationLayout(const Metrics& m,int top,int bottom,int menu_rows,

@@ -72,6 +72,7 @@ struct ScreenRecoveryUI {
   std::mutex event_queue_mutex;std::condition_variable event_queue_cond;
   InputEvent event_queue[256];int event_queue_len=0;
   int terminal_focus_=-1;std::string terminal_input_;
+  std::vector<std::string> title_lines_{"Product name - diting","Version 17.0.130"};
   std::unique_ptr<terminal::State> terminal_state_;
   std::unique_ptr<int> menu_=std::make_unique<int>(1),transition_menu_;
   std::deque<std::function<InputEvent(ScreenRecoveryUI&)>> events;
@@ -167,6 +168,7 @@ void Check(int w,int h,const std::string& out) {
       anchor=view.Rows()[view.First()];anchor_inset=view.Offset()%view.LineHeight();
       if(w==1220) {
         PixelCanvas c(width,height,true);terminal::Draw(c,width,height,s.terminal_input_,view,false,false,-1);
+        DrawPageFooter(c,width,height,s.title_lines_);
         c.Write(preview_directory+"/terminal-history"+(GetLanguage()==Language::Chinese?"-zh.ppm":"-en.ppm"));
       }
     }

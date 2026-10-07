@@ -7,8 +7,9 @@
 
 namespace recovery_m3e::terminal {
 struct Key {Rect bounds;std::string label,value;};
-inline std::vector<Key> Keyboard(int width,int height,bool symbols,bool shift) {
-  int pad=Dp(width,10),gap=Dp(width,3),kh=Dp(width,38),top=height-4*(kh+gap)-Dp(width,10);
+inline std::vector<Key> Keyboard(int width,int height,bool symbols,bool shift,bool footer=true) {
+  int bottom=footer?PageFooterTop(width,height):height;
+  int pad=Dp(width,10),gap=Dp(width,3),kh=Dp(width,38),top=bottom-4*(kh+gap)-Dp(width,10);
   std::vector<Key> keys;
   const std::array<std::string,3> letters{{"qwertyuiop","asdfghjkl","zxcvbnm"}};
   const std::array<std::string,3> punctuation{{"1234567890","/.-_~|&;$","<>*?=()"}};

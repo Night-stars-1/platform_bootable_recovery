@@ -59,13 +59,19 @@ struct Palette {
   uint8_t alert_opacity=24;  // About 9% tint; the page remains visible underneath.
   static Palette ForMode(bool) {return {};}
 };
+struct ListButtonStyle {
+  static constexpr int height=63,gap=5,inset=18;
+  static constexpr int outer_radius=17,inner_radius=3;
+  static constexpr int padding=22,icon_size=26,label_gap=20,outline=1;
+};
 struct Metrics {
   int width,char_width,char_height,inset,gap,row_height;
   Metrics(int w,int=0,int=0,int margin=0):width(w),char_width(Dp(w,10)),
-      char_height(Dp(w,24)),inset(std::max(margin,Dp(w,24))),gap(Dp(w,8)),row_height(Dp(w,76)){}
+      char_height(Dp(w,24)),inset(std::max(margin,Dp(w,ListButtonStyle::inset))),
+      gap(Dp(w,ListButtonStyle::gap)),row_height(Dp(w,ListButtonStyle::height)){}
   Rect Card(int y) const {return {inset,y,width-2*inset,row_height};}
-  int Radius() const {return Dp(width,22);}
-  int InnerRadius() const {return Dp(width,4);}
+  int Radius() const {return Dp(width,ListButtonStyle::outer_radius);}
+  int InnerRadius() const {return Dp(width,ListButtonStyle::inner_radius);}
   int Pitch() const {return row_height+gap;}
 };
 struct CornerRadii { int top,bottom; };
@@ -221,24 +227,26 @@ inline void DrawCard(Canvas& c,const Metrics& m,int y,const std::string& name,
   bool danger=icon==Icon::Trash;
   Color bg=danger?(active?p.on_error:p.error_surface):(active?p.pressed:p.card);
   Color fg=p.text;
-  Surface(c,b,ListCorners(m,first,last),bg,selected,p.text,Dp(m.width,2));
-  int pad=Dp(m.width,16), size=Dp(m.width,40);
+  Surface(c,b,ListCorners(m,first,last),bg,selected,p.text,Dp(m.width,ListButtonStyle::outline));
+  int pad=Dp(m.width,ListButtonStyle::padding),size=Dp(m.width,ListButtonStyle::icon_size);
   Rect badge{b.x+pad,b.y+(b.h-size)/2,size,size};
-  Rounded(c,badge,Dp(m.width,14),danger?p.error_surface:p.surface);
-  DrawIcon(c,Inset(badge,Dp(m.width,9)),icon,p.text);
-  int x=badge.x+badge.w+Dp(m.width,12), available=b.x+b.w-pad-x;
+  DrawIcon(c,badge,icon,p.text);
+  int x=badge.x+badge.w+Dp(m.width,ListButtonStyle::label_gap),available=b.x+b.w-pad-x;
+  Font font=Font::DesignMenu;
   std::string sub=Subtitle(name);
   if(sub.empty()) {
-    auto lines=WrapText(Tr(name),available,FontPixels(Font::Menu,m.width),selected);
-    int lh=LineHeight(FontPixels(Font::Menu,m.width));
+    auto lines=WrapText(Tr(name),available,FontPixels(font,m.width),false,false,FaceFor(font));
+    int lh=FontLineHeight(font,m.width);
     int used=std::min(2,static_cast<int>(lines.size()));
     int ty=y+(b.h-used*lh)/2;
     for(int i=0;i<used;++i) {
-      Label(c,m,x,ty+i*lh,available,lines[i]+(i==1 && lines.size()>2?"...":""),Font::Menu,fg,selected);
+      Label(c,m,x,ty+i*lh,available,lines[i]+(i==1 && lines.size()>2?"...":""),font,fg);
     }
   } else {
-    Label(c,m,x,y+Dp(m.width,15),available,name,Font::Menu,fg,selected);
-    Label(c,m,x,y+Dp(m.width,43),available,sub,Font::Small,p.secondary);
+    int title_height=FontLineHeight(font,m.width),subtitle_height=FontLineHeight(Font::DesignSmall,m.width);
+    int gap=Dp(m.width,4),ty=y+(b.h-title_height-subtitle_height-gap)/2;
+    Label(c,m,x,ty,available,name,font,fg);
+    Label(c,m,x,ty+title_height+gap,available,sub,Font::DesignSmall,p.secondary);
   }
 }
 struct DashboardLayout {std::array<Rect,4> cards;int height;bool valid;};
@@ -301,9 +309,13 @@ inline DeviceInfo ReadDeviceInfo(const std::vector<std::string>& lines) {
   return info;
 }
 inline int BackButtonSize(int width) {return Dp(width,48);}
-inline Rect BackBounds(const Metrics& m,int top) {return {m.inset,top,BackButtonSize(m.width),BackButtonSize(m.width)};}
-inline int HeaderBottom(const Metrics& m,int top,bool dashboard) {
-  int y=top+BackButtonSize(m.width)+Dp(m.width,14);
+inline Rect PageBackBounds(int width) {return {Dp(width,27),Dp(width,28),BackButtonSize(width),BackButtonSize(width)};}
+inline Rect BackBounds(const Metrics& m,int) {return PageBackBounds(m.width);}
+inline int PageFooterTop(int width,int height) {return height-Dp(width,55);}
+inline int PageContentBottom(int width,int height) {return PageFooterTop(width,height)-Dp(width,10);}
+inline int HeaderBottom(const Metrics& m,int,bool dashboard) {
+  auto back=PageBackBounds(m.width);
+  int y=back.y+back.h+Dp(m.width,14);
   y+=LineHeight(FontPixels(dashboard?Font::Title:Font::Heading,m.width))+Dp(m.width,dashboard?8:0);
   if(dashboard) y+=Dp(m.width,28);
   return y+Dp(m.width,dashboard?20:12);
@@ -322,10 +334,10 @@ inline int DrawHeader(Canvas& c,const Metrics& m,int top,bool back,bool back_sel
   if(back) {
     Surface(c,b,b.h/2,p.surface,back_selected,p.text,Dp(m.width,2));
     DrawIcon(c,Inset(b,Dp(m.width,14)),Icon::Back,p.text);
-    brand_x+=b.w+Dp(m.width,12);
+    brand_x=b.x+b.w+Dp(m.width,12);
   }
-  c.Text(brand_x,top+Dp(m.width,13),"uwuAOSP",Font::Menu,p.text,true);
-  int y=top+b.h+Dp(m.width,14);
+  c.Text(brand_x,b.y+Dp(m.width,13),"uwuAOSP",Font::Menu,p.text,true);
+  int y=b.y+b.h+Dp(m.width,14);
   Font title=dashboard?Font::Title:Font::Heading;
   if(!fastboot && page=="Recovery") {
     // Keep the home title in English in every UI language.
@@ -347,13 +359,60 @@ inline int DrawHeader(Canvas& c,const Metrics& m,int top,bool back,bool back_sel
   }
   return HeaderBottom(m,top,dashboard);
 }
+struct SymbolMask {std::vector<uint8_t> alpha;Rect ink;};
+inline void DrawSymbol(Canvas& c,Rect b,fontdata::Symbol glyph,Color color=theme::text,bool filled=false,int pixels=0) {
+  const auto& g=filled?fontdata::kSymbolsBold[static_cast<int>(glyph)]:fontdata::kSymbolsRegular[static_cast<int>(glyph)];
+  static const auto masks=[] {
+    constexpr int count=sizeof(fontdata::kSymbolsRegular)/sizeof(fontdata::Glyph);
+    std::array<SymbolMask,count*2> result;
+    for(int style=0;style<2;++style)for(int index=0;index<count;++index) {
+      const auto& glyph=style?fontdata::kSymbolsBold[index]:fontdata::kSymbolsRegular[index];
+      auto& mask=result[style*count+index];
+      mask.alpha=DecodeGlyph(glyph,style?fontdata::kSymbolsBoldData:fontdata::kSymbolsRegularData);
+      int left=glyph.w,top=glyph.h,right=0,bottom=0;
+      for(int y=0;y<glyph.h;++y)for(int x=0;x<glyph.w;++x)if(mask.alpha[y*glyph.w+x]) {
+        left=std::min(left,x);top=std::min(top,y);right=std::max(right,x+1);bottom=std::max(bottom,y+1);
+      }
+      mask.ink={left,top,std::max(0,right-left),std::max(0,bottom-top)};
+    }
+    return result;
+  }();
+  const auto& mask=masks[(filled?sizeof(fontdata::kSymbolsRegular)/sizeof(fontdata::Glyph):0)+static_cast<int>(glyph)];
+  std::vector<uint8_t> alpha(std::max(0,b.w*b.h));
+  double scale=double(pixels>0?pixels:std::min(b.w,b.h))/fontdata::kSize;
+  if(scale<=0)return;
+  // Font bounds include advance/baseline whitespace. Center only visible ink.
+  double left=(b.w-mask.ink.w*scale)/2-mask.ink.x*scale;
+  double top=(b.h-mask.ink.h*scale)/2-mask.ink.y*scale;
+  auto sample=[&](int x,int y)->double {return x<0 || y<0 || x>=g.w || y>=g.h?0:mask.alpha[y*g.w+x];};
+  for(int y=0;y<b.h;++y)for(int x=0;x<b.w;++x) {
+    double sx=(x+0.5-left)/scale-0.5,sy=(y+0.5-top)/scale-0.5;
+    int ix=std::floor(sx),iy=std::floor(sy);double ax=sx-ix,ay=sy-iy;
+    double value=(sample(ix,iy)*(1-ax)+sample(ix+1,iy)*ax)*(1-ay)+
+      (sample(ix,iy+1)*(1-ax)+sample(ix+1,iy+1)*ax)*ay;
+    alpha[y*b.w+x]=static_cast<uint8_t>(std::clamp(std::lround(value),0L,255L));
+  }
+  c.Mask(b,alpha,color);
+}
+inline fontdata::Symbol ChargingBatterySymbol(int capacity) {
+  if(capacity>=100)return fontdata::Symbol::BatteryChargingFull;
+  if(capacity>=80)return fontdata::Symbol::BatteryCharging80;
+  if(capacity>=60)return fontdata::Symbol::BatteryCharging60;
+  if(capacity>=50)return fontdata::Symbol::BatteryCharging50;
+  if(capacity>=30)return fontdata::Symbol::BatteryCharging30;
+  return fontdata::Symbol::BatteryCharging20;
+}
 inline void DrawBattery(Canvas& c,const Metrics& m,int top,int capacity,bool charging,const Palette& p) {
   std::string value=capacity>=0 && capacity<=100?std::to_string(capacity)+"%":"--%";
-  if(charging) value+="+";
-  int width=TextWidth(value,FontPixels(Font::Small,m.width),true)+Dp(m.width,24);
+  int icon=Dp(m.width,18),pad=Dp(m.width,12);
+  int width=TextWidth(value,FontPixels(Font::Small,m.width),true)+2*pad+
+      (charging?icon+Dp(m.width,6):0);
   Rect b{m.width-m.inset-width,top+Dp(m.width,9),width,Dp(m.width,30)};
   Rounded(c,b,b.h/2,p.surface);
-  c.Text(b.x+Dp(m.width,12),b.y+Dp(m.width,7),value,Font::Small,capacity>=0 && capacity<=15?p.error:p.secondary,true);
+  Color color=capacity>=0 && capacity<=15?p.error:p.secondary;
+  c.Text(b.x+pad,b.y+Dp(m.width,7),value,Font::Small,color,true);
+  if(charging)DrawSymbol(c,{b.x+b.w-pad-icon,b.y+(b.h-icon)/2,icon,icon},
+      ChargingBatterySymbol(capacity),color,capacity>=100);
 }
 enum class AlertLevel { Auto, Info, Success, Warning, Error };
 inline Color AlertAccent(AlertLevel level,const Palette& p) {
@@ -423,26 +482,21 @@ inline int DrawPrompt(Canvas& c,const Metrics& m,int y,const std::vector<std::st
   }
   return box.y+box.h+Dp(m.width,12);
 }
-inline void DrawFooter(Canvas& c,const Metrics& m,int y,int bottom,const std::vector<std::string>& details,
-                      bool,bool,const std::vector<std::string>& logs,const Palette& p) {
-  int small=FontPixels(Font::Small,m.width),lh=LineHeight(small);
+inline void DrawPageFooter(Canvas& c,int width,int height,const std::vector<std::string>& details) {
+  Metrics m(width);int y=PageFooterTop(width,height),pad=Dp(width,24),lh=FontLineHeight(Font::Code,width);
+  Rounded(c,{Dp(width,4),y,width-2*Dp(width,4),height-y},CornerRadii{Dp(width,17),Dp(width,5)},theme::surface);
   auto info=ReadDeviceInfo(details);
-  int version_y=bottom-lh;
-  std::string metadata=info.version;
-  if(metadata.empty() && !info.extra.empty()) metadata=info.extra.front();
-  if(version_y>=y && !metadata.empty()) Label(c,m,m.inset,version_y,m.width-2*m.inset,metadata,Font::Small,p.secondary);
-  int box_bottom=version_y-Dp(m.width,16);
-  int needed=Dp(m.width,22)+lh*(logs.empty()?1:3);
-  if(!logs.empty() && box_bottom-y>=needed) {
-    Rect box{m.inset,box_bottom-needed,m.width-2*m.inset,needed};
-    Rounded(c,box,Dp(m.width,20),p.surface);
-    int x=box.x+Dp(m.width,16),ty=box.y+Dp(m.width,10);
-    Label(c,m,x,ty,box.w-Dp(m.width,32),"RECENT OUTPUT",Font::Small,p.text,true);
-    ty+=lh+Dp(m.width,4);
-    size_t start=logs.size()>2?logs.size()-2:0;
-    for(size_t i=start;i<logs.size();++i) {
-      Label(c,m,x,ty,box.w-Dp(m.width,32),logs[i],Font::Small,p.secondary);ty+=lh;
-    }
-  }
+  auto date=info.version.find(" (");if(date!=std::string::npos)info.version.resize(date);
+  int right=width-Dp(width,143),ty=y+Dp(width,15);
+  Label(c,m,pad,ty,right-pad-Dp(width,8),"uwuAOSP recovery",Font::Code,theme::text);
+  Label(c,m,pad,ty+lh,right-pad-Dp(width,8),"codename: "+info.product,Font::Code,theme::text);
+  auto right_label=[&](const std::string& value,int top) {
+    int pixels=FontPixels(Font::Code,width);
+    auto label=FitText(Tr(value),width-right-pad,pixels,false,true,Face::Code);
+    int tw=TextWidth(label,pixels,false,true,Face::Code);
+    c.Text(width-pad-tw,top,label,Font::Code,theme::text,false);
+  };
+  right_label("Recovery version",ty);
+  right_label(info.version,ty+lh);
 }
 } // namespace recovery_m3e

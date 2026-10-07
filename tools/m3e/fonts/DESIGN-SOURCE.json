@@ -26,7 +26,7 @@
       "source": "https://raw.githubusercontent.com/google/material-design-icons/737e3324305806514d7909874fa1818ae1808232/variablefont/MaterialSymbolsRounded%5BFILL%2CGRAD%2Copsz%2Cwght%5D.ttf",
       "git_commit": "737e3324305806514d7909874fa1818ae1808232",
       "source_sha256": "95b24392bb49efd1bc3e92cff4e2452ad094461bab7c97e7d8723fab97e330ca",
-      "sha256": "cbf101e01800d72cb4d1f639ad7bfd0378d24ac362fcd1948c3f0adc8847409d",
+      "sha256": "a7bef8ca51a2f44bf088a91065077d6469558eee73d671aea26cbf2ebe8ab608",
       "subset": {
         "fonttools": "4.66.1",
         "names": {
@@ -49,7 +49,13 @@
           "Battery4": "battery_android_4",
           "Battery5": "battery_android_5",
           "Battery6": "battery_android_6",
-          "BatteryFull": "battery_android_full"
+          "BatteryFull": "battery_android_full",
+          "BatteryCharging20": "battery_charging_20_2",
+          "BatteryCharging30": "battery_charging_30_2",
+          "BatteryCharging50": "battery_charging_50_2",
+          "BatteryCharging60": "battery_charging_60_2",
+          "BatteryCharging80": "battery_charging_80_2",
+          "BatteryChargingFull": "battery_charging_full_2"
         },
         "recalc_timestamp": false,
         "name_IDs": "*",
@@ -77,7 +83,13 @@
     "Battery4": 62217,
     "Battery5": 62216,
     "Battery6": 62215,
-    "BatteryFull": 62212
+    "BatteryFull": 62212,
+    "BatteryCharging20": 1048382,
+    "BatteryCharging30": 1048381,
+    "BatteryCharging50": 1048380,
+    "BatteryCharging60": 1048379,
+    "BatteryCharging80": 1048378,
+    "BatteryChargingFull": 1048377
   },
   "licenses": [
     {

@@ -21,7 +21,7 @@ inline Layout Keyboard(int width,int height,bool pin,bool symbols,bool shift) {
       keys.push_back({{pad+col*(kw+gap),top+row*(kh+gap),kw,kh},label,action,digit});
     }
   } else {
-    auto letters=terminal::Keyboard(width,height,symbols,shift);
+    auto letters=terminal::Keyboard(width,height,symbols,shift,false);
     for(size_t i=0;i+7<letters.size();++i)
       keys.push_back({letters[i].bounds,letters[i].label,Action::Character,static_cast<uint8_t>(letters[i].value[0])});
     const std::array<std::string,5> labels{{symbols?"ABC":"123",symbols?(shift?"Less":"More"):(shift?"abc":"ABC"),"Space","Delete last character","Clear input"}};

@@ -386,13 +386,9 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   // Screen width capped to the M3E scale basis (the shorter screen side).
   int M3eScaleWidth() const;
 
-  int MenuItemHeight() const override {
-    return std::max(1, (M3eScaleWidth() * (IsDesignMenuLocked() ? 63 : 76) + 180) / 360);
-  }
+  int MenuItemHeight() const override;
 
-  int MenuItemSpacing() const override {
-    return std::max(1, (M3eScaleWidth() * (IsDesignMenuLocked() ? 5 : 8) + 180) / 360);
-  }
+  int MenuItemSpacing() const override;
 
  protected:
   static constexpr int kMenuIndent = 24;

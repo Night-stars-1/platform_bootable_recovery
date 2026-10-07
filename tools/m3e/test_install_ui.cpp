@@ -229,6 +229,7 @@ void RenderDesign(const std::string& out,int w,int h,bool zh,int page,bool pixel
       page==3?std::vector<std::string>{}:std::vector<std::string>{"Finding package...","Verifying package...","Installing updates","Step 1/2"},details);
   else if(page==5) {
     terminal::Draw(c,w,h,"ls /system/bin",{"# pwd","/","# ls /system/bin"},false,false,-1);
+    DrawPageFooter(c,w,h,details);
 #ifdef M3E_INSTALL_ROUTING_TEST
     if(!pixels)TerminalFlow::Check(w,h,out);
 #endif
@@ -261,7 +262,7 @@ void RenderDesign(const std::string& out,int w,int h,bool zh,int page,bool pixel
     design::Footer(c,w,h,details);
   }
   if(page!=5 && page<7)design::Battery(c,w,82,false);
-  if(page<5 || page==6) {
+  if(page<=6) {
     auto label=std::find_if(c.runs.begin(),c.runs.end(),[](const PixelCanvas::Run& run){
       return run.text==Tr("Recovery version");
     });

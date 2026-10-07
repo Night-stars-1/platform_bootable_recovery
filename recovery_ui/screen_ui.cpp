@@ -103,6 +103,7 @@ void ScreenRecoveryUI::DrawTerminalLocked() {
   terminal_state_->view.Update(terminal_state_->output,ScreenWidth(),ScreenHeight());
   recovery_m3e::terminal::Draw(canvas,ScreenWidth(),ScreenHeight(),terminal_input_,terminal_state_->view,
       terminal_symbols_,terminal_shift_,terminal_focus_);
+  recovery_m3e::DrawPageFooter(canvas,ScreenWidth(),ScreenHeight(),title_lines_);
 }
 
 void ScreenRecoveryUI::ShowTerminal() {
@@ -1123,6 +1124,14 @@ int ScreenRecoveryUI::M3eScaleWidth() const {
   return recovery_m3e::ScaleWidth(ScreenWidth());
 }
 
+int ScreenRecoveryUI::MenuItemHeight() const {
+  return recovery_m3e::Metrics(M3eScaleWidth()).row_height;
+}
+
+int ScreenRecoveryUI::MenuItemSpacing() const {
+  return recovery_m3e::Metrics(M3eScaleWidth()).gap;
+}
+
 int ScreenRecoveryUI::ScreenHeight() const {
   return gr_fb_height();
 }
@@ -1300,32 +1309,18 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(const std::vector<std::s
     recovery_m3e::Metrics m(ScreenWidth());
     auto palette = recovery_m3e::Palette::ForMode(fastbootd_logo_enabled_);
     int top = std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
-    int bottom = ScreenHeight() - std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
-    int footer = recovery_m3e::Dp(ScreenWidth(), 76);
+    int bottom = recovery_m3e::PageContentBottom(ScreenWidth(),ScreenHeight());
     bool dashboard = menu_->DashboardCandidate() &&
-        bottom - footer - recovery_m3e::HeaderBottom(m, top, true) >= recovery_m3e::DashboardMinimum(m);
+        bottom - recovery_m3e::HeaderBottom(m, top, true) >= recovery_m3e::DashboardMinimum(m);
     int y = recovery_m3e::DrawHeader(canvas, m, top, !menu_->IsMain(), menu_->selection() == -1,
         fastbootd_logo_enabled_, char_width_, char_height_, title_lines_, palette,
         menu_->PageTitle(), dashboard);
     y += menu_->DrawHeader(m.inset, y);
     menu_start_y_ = y;
-    m3e_menu_bottom_ = bottom - footer;
-    // Short (landscape/tablet) screens: give the footer's space to the menu rather than
-    // show fewer than two items. DrawFooter skips whatever no longer fits below them.
-    if (recovery_m3e::VisibleCount(m3e_menu_bottom_ - menu_start_y_, MenuItemHeight(),
-                                   MenuItemSpacing()) < 2) {
-      m3e_menu_bottom_ = bottom;
-    }
+    m3e_menu_bottom_ = bottom;
     menu_->SetViewport(ScreenWidth(), std::max(0, m3e_menu_bottom_ - menu_start_y_));
-    y += menu_->DrawItems(m.inset, y, ScreenWidth(), IsLongPress());
-    std::vector<std::string> recent;
-    int row = text_row_;
-    for (size_t count = 0; count < text_rows_ && recent.size() < 2; ++count) {
-      if (text_[row] && text_[row][0]) recent.insert(recent.begin(), text_[row]);
-      row = row > 0 ? row - 1 : text_rows_ - 1;
-    }
-    recovery_m3e::DrawFooter(canvas, m, y + recovery_m3e::Dp(ScreenWidth(), 16), bottom,
-                             title_lines_, HasTouchScreen(), HasThreeButtons(), recent, palette);
+    menu_->DrawItems(m.inset, y, ScreenWidth(), IsLongPress());
+    recovery_m3e::DrawPageFooter(canvas,ScreenWidth(),ScreenHeight(),title_lines_);
     return;
   }
   // No menu is active while services start or an action returns to its parent.
@@ -1800,7 +1795,7 @@ void ScreenRecoveryUI::DrawInstallPageLocked() {
   recovery_m3e::Metrics m(ScreenWidth());
   auto palette = recovery_m3e::Palette::ForMode(false);
   int top = std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
-  int bottom = ScreenHeight() - top;
+  int bottom = recovery_m3e::PageContentBottom(ScreenWidth(),ScreenHeight());
   int rows = menu_ ? std::min<size_t>(2, menu_->ItemsCount()) : 0;
   int y = recovery_m3e::DrawInstallHeader(canvas, m, top, bottom, rows,
       menu_ && menu_->selection() == -1, title_lines_, palette,
@@ -1821,6 +1816,7 @@ void ScreenRecoveryUI::DrawInstallPageLocked() {
     menu_->SetViewport(ScreenWidth(), std::max(0, bottom - menu_start_y_));
     menu_->DrawItems(m.inset, menu_start_y_, ScreenWidth(), IsLongPress());
   }
+  recovery_m3e::DrawPageFooter(canvas,ScreenWidth(),ScreenHeight(),title_lines_);
 }
 
 void ScreenRecoveryUI::SetProgressType(ProgressType type) {
@@ -2117,10 +2113,7 @@ int ScreenRecoveryUI::SelectMenu(const Point& p) {
   std::lock_guard<std::mutex> lg(updateMutex);
   if (menu_) {
 
-    recovery_m3e::Metrics m(ScreenWidth(), MenuCharWidth(), MenuCharHeight());
-    int top = std::max(margin_height_, recovery_m3e::Dp(ScreenWidth(), 24));
-    auto back = IsDesignMenuLocked() || IsDesignAdbLocked() ?
-        recovery_m3e::design::Back(ScreenWidth()) : recovery_m3e::BackBounds(m, top);
+    auto back = recovery_m3e::PageBackBounds(ScreenWidth());
     if (!menu_->IsMain() && recovery_m3e::InRounded(back, back.h / 2, point.x(), point.y())) {
       return Device::kGoBack;
     }

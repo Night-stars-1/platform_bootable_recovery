@@ -23,10 +23,10 @@ inline bool AdbPage(bool adb,recovery_ui::InstallStage stage) {
 constexpr Color background=theme::background,surface=theme::surface,text=theme::text;
 constexpr Color green=theme::green,muted=theme::muted,track=theme::track;
 inline Metrics LayoutMetrics(int width) {
-  Metrics m(width);m.inset=Dp(width,18);m.row_height=Dp(width,63);m.gap=Dp(width,5);return m;
+  return Metrics(width);
 }
-inline Rect Back(int width) {return {Dp(width,27),Dp(width,28),BackButtonSize(width),BackButtonSize(width)};}
-inline int FooterTop(int width,int height) {return height-Dp(width,55);}
+inline Rect Back(int width) {return PageBackBounds(width);}
+inline int FooterTop(int width,int height) {return PageFooterTop(width,height);}
 inline int TitleTop(int width,int height) {return Dp(width,height<Dp(width,600)?65:112);}
 inline int PageTitleTop(int width,int height,Page page) {
   int top=TitleTop(width,height);
@@ -53,40 +53,8 @@ inline int MenuTop(int width,int height,Page page) {
   return PageTitleTop(width,height,page)+Dp(width,page==Page::Home?71:39);
 }
 using Glyph=fontdata::Symbol;
-struct SymbolMask {std::vector<uint8_t> alpha;Rect ink;};
 inline void Symbol(Canvas& c,Rect b,Glyph glyph,Color color=text,bool filled=false,int pixels=0) {
-  const auto& g=filled?fontdata::kSymbolsBold[static_cast<int>(glyph)]:fontdata::kSymbolsRegular[static_cast<int>(glyph)];
-  static const auto masks=[] {
-    constexpr int count=sizeof(fontdata::kSymbolsRegular)/sizeof(fontdata::Glyph);
-    std::array<SymbolMask,count*2> result;
-    for(int style=0;style<2;++style)for(int index=0;index<count;++index) {
-      const auto& glyph=style?fontdata::kSymbolsBold[index]:fontdata::kSymbolsRegular[index];
-      auto& mask=result[style*count+index];
-      mask.alpha=DecodeGlyph(glyph,style?fontdata::kSymbolsBoldData:fontdata::kSymbolsRegularData);
-      int left=glyph.w,top=glyph.h,right=0,bottom=0;
-      for(int y=0;y<glyph.h;++y)for(int x=0;x<glyph.w;++x)if(mask.alpha[y*glyph.w+x]) {
-        left=std::min(left,x);top=std::min(top,y);right=std::max(right,x+1);bottom=std::max(bottom,y+1);
-      }
-      mask.ink={left,top,std::max(0,right-left),std::max(0,bottom-top)};
-    }
-    return result;
-  }();
-  const auto& mask=masks[(filled?sizeof(fontdata::kSymbolsRegular)/sizeof(fontdata::Glyph):0)+static_cast<int>(glyph)];
-  std::vector<uint8_t> alpha(std::max(0,b.w*b.h));
-  double scale=double(pixels>0?pixels:std::min(b.w,b.h))/fontdata::kSize;
-  if(scale<=0)return;
-  // Font bounds include advance/baseline whitespace. Center only visible ink.
-  double left=(b.w-mask.ink.w*scale)/2-mask.ink.x*scale;
-  double top=(b.h-mask.ink.h*scale)/2-mask.ink.y*scale;
-  auto sample=[&](int x,int y)->double {return x<0 || y<0 || x>=g.w || y>=g.h?0:mask.alpha[y*g.w+x];};
-  for(int y=0;y<b.h;++y)for(int x=0;x<b.w;++x) {
-    double sx=(x+0.5-left)/scale-0.5,sy=(y+0.5-top)/scale-0.5;
-    int ix=std::floor(sx),iy=std::floor(sy);double ax=sx-ix,ay=sy-iy;
-    double value=(sample(ix,iy)*(1-ax)+sample(ix+1,iy)*ax)*(1-ay)+
-      (sample(ix,iy+1)*(1-ax)+sample(ix+1,iy+1)*ax)*ay;
-    alpha[y*b.w+x]=static_cast<uint8_t>(std::clamp(std::lround(value),0L,255L));
-  }
-  c.Mask(b,alpha,color);
+  DrawSymbol(c,b,glyph,color,filled,pixels);
 }
 inline void Chevron(Canvas& c,Rect b,Color color=text) {
   // Use the entire round button for positioning, keeping font size separate.
@@ -95,7 +63,6 @@ inline void Chevron(Canvas& c,Rect b,Color color=text) {
 inline void Battery(Canvas& c,int width,int capacity,bool charging) {
   Metrics m(width);int h=Dp(width,28),pad=Dp(width,9),icon=Dp(width,18);
   std::string value=capacity>=0 && capacity<=100?std::to_string(capacity)+"%":"--%";
-  if(charging) value+="+";
   int tw=TextWidth(value,FontPixels(Font::DesignSmall,width),false,false,Face::Flex),bw=tw+3*pad+icon;
   Rect box{width-Dp(width,32)-bw,Dp(width,32),bw,h};
   Rounded(c,box,h/2,surface);
@@ -104,24 +71,10 @@ inline void Battery(Canvas& c,int width,int capacity,bool charging) {
   constexpr Glyph levels[]={Glyph::BatteryEmpty,Glyph::Battery1,Glyph::Battery2,
     Glyph::Battery3,Glyph::Battery4,Glyph::Battery5,Glyph::Battery6,Glyph::BatteryFull};
   int level=capacity>=0 && capacity<=100?capacity*7/100:0;
-  Symbol(c,cell,levels[level],text,level!=0);
+  Symbol(c,cell,charging?ChargingBatterySymbol(capacity):levels[level],text,charging?capacity>=100:level!=0);
 }
 inline void Footer(Canvas& c,int width,int height,const std::vector<std::string>& details) {
-  Metrics m(width);int y=FooterTop(width,height),pad=Dp(width,24),lh=FontLineHeight(Font::Code,width);
-  Rounded(c,{Dp(width,4),y,width-2*Dp(width,4),height-y},CornerRadii{Dp(width,17),Dp(width,5)},surface);
-  auto info=ReadDeviceInfo(details);
-  auto date=info.version.find(" (");if(date!=std::string::npos)info.version.resize(date);
-  int right=width-Dp(width,143),ty=y+Dp(width,15);
-  Label(c,m,pad,ty,right-pad-Dp(width,8),"uwuAOSP recovery",Font::Code,text);
-  Label(c,m,pad,ty+lh,right-pad-Dp(width,8),"codename: "+info.product,Font::Code,text);
-  auto right_label=[&](const std::string& value,int top) {
-    int pixels=FontPixels(Font::Code,width);
-    auto label=FitText(Tr(value),width-right-pad,pixels,false,true,Face::Code);
-    int tw=TextWidth(label,pixels,false,true,Face::Code);
-    c.Text(width-pad-tw,top,label,Font::Code,text,false);
-  };
-  right_label("Recovery version",ty);
-  right_label(info.version,ty+lh);
+  DrawPageFooter(c,width,height,details);
 }
 inline void Header(Canvas& c,int width,int height,Page page,bool back_selected=false,
                    const std::string& override_title={}) {
@@ -199,12 +152,12 @@ inline int Dashboard(Canvas& c,int width,int top,int available,int selected,bool
 }
 inline bool SeparatePower(Page page) {return page==Page::Reboot || page==Page::Fastboot;}
 inline int ExtraGap(int width,Page page,bool before_last) {return SeparatePower(page) && before_last?Dp(width,27):0;}
-inline CornerRadii Corners(int width,bool first,bool last) {return {Dp(width,first?17:3),Dp(width,last?17:3)};}
+inline CornerRadii Corners(int width,bool first,bool last) {return ListCorners(LayoutMetrics(width),first,last);}
 inline void Card(Canvas& c,int width,int y,const std::string& name,bool selected,bool active,
                  bool first,bool last) {
   auto m=LayoutMetrics(width);Rect b=m.Card(y);
-  Surface(c,b,Corners(width,first,last),active?track:surface,selected,text,Dp(width,1));
-  int icon=Dp(width,26),pad=Dp(width,22),ix=b.x+pad,iy=b.y+(b.h-icon)/2;
+  Surface(c,b,Corners(width,first,last),active?track:surface,selected,text,Dp(width,ListButtonStyle::outline));
+  int icon=Dp(width,ListButtonStyle::icon_size),pad=Dp(width,ListButtonStyle::padding),ix=b.x+pad,iy=b.y+(b.h-icon)/2;
   Glyph glyph=Glyph::Storage;Color color=text;std::string label=name;bool arrow=false;
   if(name=="Reboot system now") {glyph=Glyph::Android;color=green;label="System";}
   else if(name=="Enter fastboot") {glyph=Glyph::Warning;color={255,0,64};label="FastbootD";}
@@ -223,7 +176,7 @@ inline void Card(Canvas& c,int width,int y,const std::string& name,bool selected
     int circle=Dp(width,24);Rect cb{right-circle,b.y+(b.h-circle)/2,circle,circle};
     Rounded(c,cb,circle/2,{54,55,59});Chevron(c,cb);right=cb.x-Dp(width,12);
   }
-  int tx=ix+icon+Dp(width,20);
+  int tx=ix+icon+Dp(width,ListButtonStyle::label_gap);
     Font font=label=="package from local storage"?Font::Source:Font::DesignMenu;
     c.Text(tx,b.y+(b.h-FontLineHeight(font,width))/2,
     FitText(label,right-tx,FontPixels(font,width),false,false,FaceFor(font)),font,text,false);
