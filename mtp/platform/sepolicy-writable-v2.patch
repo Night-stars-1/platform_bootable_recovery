@@ -19,7 +19,7 @@ diff --git a/private/recovery.te b/private/recovery.te
  typeattribute recovery coredomain;
  
  # The allow rules are only included in the recovery policy.
-@@ -209,10 +212,34 @@
+@@ -209,10 +212,32 @@
     -cache_file
     -cache_recovery_file
    with_native_coverage(`-method_trace_data_file')
@@ -49,9 +49,7 @@ diff --git a/private/recovery.te b/private/recovery.te
 +recovery_mtp_only(`
 +  # Only shared media; key, keystore and credential types retain their bans.
 +  allow recovery media_rw_data_file:dir create_dir_perms;
-+  # O_TMPFILE uploads are published with linkat after their contents are flushed.
-+  # create_file_perms does not include link.
-+  allow recovery media_rw_data_file:file { create_file_perms link };
++  allow recovery media_rw_data_file:file create_file_perms;
 +  allowxperm recovery { userdata_block_device dm_device }:blk_file ioctl BLKROGET;
 +')
 +# END RECOVERY MTP

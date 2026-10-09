@@ -145,6 +145,30 @@ class Deployment(unittest.TestCase):
         self.deploy()
         self.assertFalse(any(item[2] for item in HELPER.plan(self.root)))
 
+    def test_upgrade_complete_writable_deployment_preserves_other_policy(self):
+        for repository, patch in (('frameworks/av', 'frameworks-av.patch'),
+                                  ('system/sepolicy', 'sepolicy-writable-v2.patch')):
+            result = HELPER.git(self.root / repository, 'apply', str(HELPER.PAYLOAD / patch))
+            self.assertEqual(0, result.returncode, result.stderr)
+        policy = self.root / 'system/sepolicy/private/recovery.te'
+        before = policy.read_text().replace('// unrelated fixture line 100\n',
+            '// downstream customization\n')
+        policy.write_text(before, encoding='utf-8', newline='\n')
+        upgrade = HELPER.plan(self.root)
+        self.assertFalse(upgrade[0][2])
+        self.assertEqual({'private/recovery.te'}, set(upgrade[1][1]))
+        self.assertEqual(before, policy.read_text())
+        self.deploy()
+        self.assertFalse(any(item[2] for item in HELPER.plan(self.root)))
+        expected = before.replace('  allow recovery media_rw_data_file:file create_file_perms;',
+            '  # O_TMPFILE uploads are published with linkat after their contents are flushed.\n'
+            '  # create_file_perms does not include link.\n'
+            '  allow recovery media_rw_data_file:file { create_file_perms link };')
+        self.assertEqual(expected, policy.read_text())
+        backups = list((self.root.parent / 'android-backups').glob('*/system/sepolicy/private/recovery.te'))
+        self.assertEqual(1, len(backups))
+        self.assertEqual(before, backups[0].read_text())
+
     def test_m4_write_exception_only_in_adapted_recovery(self):
         executable = shutil.which('m4')
         if not executable:
@@ -165,7 +189,7 @@ class Deployment(unittest.TestCase):
                     text = re.sub(r'^#.*$', '', result.stdout.decode(), flags=re.M)
                     permitted = recovery == enabled == 'true'
                     self.assertEqual(permitted, '-media_rw_data_file' in text)
-                    self.assertEqual(permitted, 'allow recovery media_rw_data_file:file' in text)
+                    self.assertEqual(permitted, 'allow recovery media_rw_data_file:file { create_file_perms link };' in text)
                     self.assertNotIn('-keystore_data_file', text)
                     self.assertNotIn('-vold_data_file', text)
                     self.assertIn('no_x_file_perms', text)

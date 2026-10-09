@@ -14,7 +14,7 @@ PAYLOAD = Path(__file__).resolve().parents[2] / 'mtp/platform'
 PATCHES = {'frameworks/av': 'frameworks-av.patch', 'system/sepolicy': 'sepolicy.patch'}
 LEGACY_PATCHES = {
     'frameworks/av': ('frameworks-av-writable-v2.patch', 'frameworks-av-readonly-v1.patch'),
-    'system/sepolicy': ('sepolicy-readonly-v1.patch',),
+    'system/sepolicy': ('sepolicy-writable-v2.patch', 'sepolicy-readonly-v1.patch'),
 }
 
 
