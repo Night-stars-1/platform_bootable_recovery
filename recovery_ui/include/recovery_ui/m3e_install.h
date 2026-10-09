@@ -36,11 +36,11 @@ inline int DrawInstallHeader(Canvas& c,const Metrics& m,int top,int bottom,int m
 }
 
 inline InstallLayout InstallationLayout(const Metrics& m,int top,int bottom,int menu_rows,
-                                         int logo_width=0,int logo_height=0) {
+                                         int logo_width=0,int logo_height=0,bool detailed=false) {
   int gap=Dp(m.width,16);
   int buttons=InstallButtonSpace(m,menu_rows);
   int available=std::max(0,bottom-top-buttons);
-  int panel_height=std::min(Dp(m.width,188),available);
+  int panel_height=detailed?available:std::min(Dp(m.width,188),available);
   Rect logo{0,0,0,0};
   // Never shrink the status card or hide result actions to make room for artwork.
   if(logo_width>0 && logo_height>0 && logo_width<=m.width-2*m.inset &&
@@ -50,6 +50,12 @@ inline InstallLayout InstallationLayout(const Metrics& m,int top,int bottom,int 
   }
   Rect panel{m.inset,top,m.width-2*m.inset,panel_height};
   return {logo,panel,top+panel_height+gap};
+}
+
+inline std::string InstallPercent(double fraction) {
+  fraction=std::isfinite(fraction)?std::clamp(fraction,0.0,1.0):0.0;
+  int tenths=fraction>=1.0?1000:std::min(999,static_cast<int>(fraction*1000+0.000001));
+  return std::to_string(tenths/10)+(tenths%10?"."+std::to_string(tenths%10):"")+"%";
 }
 
 inline const char* InstallTitle(InstallStage stage,bool security_update) {
@@ -101,7 +107,7 @@ inline void DrawInstallPanel(Canvas& c,const Metrics& m,Rect panel,InstallStage 
       stage==InstallStage::FLASH_WRITING || stage==InstallStage::FLASH_VERIFYING;
   fraction=std::isfinite(fraction)?std::clamp(fraction,0.0,1.0):0.0;
   std::string percent=(progress_stage && determinate) || complete?
-      std::to_string(complete?100:static_cast<int>(fraction*100))+"%":"";
+      InstallPercent(complete?1.0:fraction):"";
   int percent_width=percent.empty()?0:TextWidth(percent,FontPixels(Font::Small,m.width),true);
   if(y+title_height<=bottom) {
     Label(c,m,x,y,width-(percent.empty()?0:percent_width+Dp(m.width,12)),
@@ -128,14 +134,20 @@ inline void DrawInstallPanel(Canvas& c,const Metrics& m,Rect panel,InstallStage 
     if(++count>2 || y+body_height>bottom) break;
     c.Text(x,y,line,Font::Body,p.secondary,false);y+=body_height;
   }
-  int small_height=LineHeight(FontPixels(Font::Small,m.width));
-  if(!logs.empty() && y+Dp(m.width,12)+2*small_height<=bottom) {
+  int small_height=FontLineHeight(Font::Small,m.width);
+  int log_height=FontLineHeight(Font::Code,m.width);
+  if(!logs.empty() && y+Dp(m.width,12)+small_height+log_height<=bottom) {
     y+=Dp(m.width,12);
     Label(c,m,x,y,width,"RECENT OUTPUT",Font::Small,p.secondary,true);y+=small_height;
-    size_t lines=std::min<size_t>(2,(bottom-y)/small_height);
-    size_t first=logs.size()>lines?logs.size()-lines:0;
-    for(size_t i=first;i<logs.size();++i) {
-      Label(c,m,x,y,width,logs[i],Font::Small,p.secondary);y+=small_height;
+    std::vector<std::string> rows;
+    for(const auto& log:logs) {
+      auto wrapped=WrapText(log,width,FontPixels(Font::Code,m.width),false,true);
+      rows.insert(rows.end(),wrapped.begin(),wrapped.end());
+    }
+    size_t lines=(bottom-y)/log_height;
+    size_t first=rows.size()>lines?rows.size()-lines:0;
+    for(size_t i=first;i<rows.size();++i) {
+      c.Text(x,y,rows[i],Font::Code,p.text,false);y+=log_height;
     }
   }
 }

@@ -29,6 +29,9 @@ def routing_test():
     recovery = (ROOT / 'recovery.cpp').read_text(encoding='utf-8')
     definitions = '\n'.join(function(screen, signature) for signature in (
         'void ScreenRecoveryUI::SetInstallStage(',
+        'void ScreenRecoveryUI::SetProgressType(',
+        'void ScreenRecoveryUI::ShowProgress(',
+        'void ScreenRecoveryUI::SetProgress(',
         'bool ScreenRecoveryUI::IsInstallPageLocked() const',
         'bool ScreenRecoveryUI::IsDesignMenuLocked() const',
         'bool ScreenRecoveryUI::IsDesignAdbLocked() const',
@@ -46,6 +49,7 @@ def routing_test():
 #include "recovery_ui/m3e_design.h"
 struct TestMenu { std::string title; std::string PageTitle() const {return title;} bool DashboardCandidate() const {return false;} };
 int frame_flips=0;void gr_flip(){++frame_flips;}
+double now(){return 0;}int gr_get_width(void*){return 10;}
 struct ScreenRecoveryUI {
   using InstallStage = recovery_ui::InstallStage;
   std::mutex updateMutex;std::unique_ptr<TestMenu> menu_;
@@ -61,6 +65,11 @@ struct ScreenRecoveryUI {
   void update_screen_locked();void update_progress_locked();
   bool ShouldHoldMenuFrameLocked() const;
   void SetInstallStage(InstallStage);bool IsInstallPageLocked() const;
+  enum ProgressType {EMPTY,DETERMINATE};ProgressType progressBarType=EMPTY;
+  float progressScopeStart=0,progressScopeSize=0,progress=0;
+  double progressScopeTime=0,progressScopeDuration=0;std::unique_ptr<int> progress_bar_empty_;
+  int ScreenWidth() const{return 1220;}
+  void SetProgressType(ProgressType);void ShowProgress(float,float);void SetProgress(float);
 };
 ''' + definitions + r'''
 enum InstallResult {INSTALL_SUCCESS, INSTALL_ERROR, INSTALL_CORRUPT, INSTALL_NONE, INSTALL_KEY_INTERRUPTED};
@@ -191,6 +200,17 @@ void CheckRouting() {
   ui.menu_->title="Confirm or select";assert(!ui.IsInstallPageLocked());
   ui.menu_.reset();assert(ui.IsInstallPageLocked());
   ui.SetInstallStage(InstallStage::INSTALLING);assert(ui.IsInstallPageLocked());
+  ui.SetProgressType(ScreenRecoveryUI::DETERMINATE);ui.ShowProgress(0.5,0);
+  for(int i=1;i<=1000;++i) {
+    ui.SetProgress(i/1000.0f);
+    assert(std::abs(ui.progress-i/1000.0f)<0.000001);
+  }
+  ui.ShowProgress(0.5,0);assert(ui.progressScopeStart==0.5 && ui.progress==0);
+  ui.SetProgress(0.0001);assert(ui.progress>0); // Retain sub-pixel callbacks.
+  ui.SetProgress(0.421);float overall=ui.progressScopeStart+ui.progress*ui.progressScopeSize;
+  assert(overall>0.710 && overall<0.711);
+  ui.SetProgress(std::numeric_limits<float>::quiet_NaN());assert(ui.progress>0.42 && ui.progress<0.422);
+  ui.SetProgress(1);assert(ui.progressScopeStart+ui.progress*ui.progressScopeSize==1);
   ui.menu_=std::make_unique<TestMenu>(TestMenu{"Factory reset"});assert(!ui.IsInstallPageLocked());
   ui.menu_->title="Install result";ui.SetInstallStage(InstallStage::ERROR);assert(ui.IsInstallPageLocked());
   ui.menu_->title="Flash result";ui.SetInstallStage(InstallStage::FLASH_ERROR);assert(ui.IsInstallPageLocked());

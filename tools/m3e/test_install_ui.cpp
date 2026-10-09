@@ -97,7 +97,8 @@ void Render(const std::string& out,int w,int h,bool zh,int index,bool pixels=fal
   int top=Dp(w,24),bottom=h-top;
   int y=DrawInstallHeader(c,m,top,bottom,rows,false,{},p);
   int logo_width=pixels?800:Dp(w,200),logo_height=pixels?568:Dp(w,142);
-  auto layout=InstallationLayout(m,y,bottom,rows,logo_width,logo_height);
+  bool detailed=stage==InstallStage::VERIFYING || stage==InstallStage::INSTALLING;
+  auto layout=InstallationLayout(m,y,bottom,rows,logo_width,logo_height,detailed);
   assert(layout.panel.y>=y && layout.panel.y+layout.panel.h<=bottom);
   if(layout.logo.w) {
     assert(layout.logo.x==(w-logo_width)/2 && layout.logo.y==y);
@@ -106,19 +107,23 @@ void Render(const std::string& out,int w,int h,bool zh,int index,bool pixels=fal
   } else {
     assert(layout.panel.y==y); // No empty gap when the bitmap cannot fit.
   }
-  auto without_logo=InstallationLayout(m,y,bottom,rows);
+  auto without_logo=InstallationLayout(m,y,bottom,rows,0,0,detailed);
   assert(without_logo.logo.w==0 && without_logo.panel.y==y);
-  auto oversized=InstallationLayout(m,y,bottom,rows,w+1,h+1);
+  auto oversized=InstallationLayout(m,y,bottom,rows,w+1,h+1,detailed);
   assert(oversized.logo.w==0 && oversized.panel.y==y);
   assert(layout.panel.h==without_logo.panel.h); // Artwork cannot reduce readable status space.
-  if(w==1220 && h==2712)assert(layout.logo.w>0);
+  if(w==1220 && h==2712)assert((layout.logo.w>0)==!detailed);
   if(!CompactInstallHeader(m,top,bottom,rows)) {
     assert(c.Has("uwuAOSP"));
   }
   c.runs.clear();
   std::vector<std::string> logs;
   if(stage==InstallStage::VERIFYING) logs={"Verifying update package..."};
-  if(stage==InstallStage::INSTALLING) logs={"Installing update...","Step 2/2"};
+  if(stage==InstallStage::INSTALLING) logs={"Installing update...","Step 1/2",
+      "Opening partition system_a","Applying operations to system_a",
+      "Completed 154/230 operations","Opening partition vendor_a",
+      "Applying operations to vendor_a","Completed 84/100 operations",
+      "Verifying partition vendor_a","Step 2/2","Finalizing update..."};
   if(stage==InstallStage::SUCCESS) logs={"Install completed with status 0."};
   if(stage==InstallStage::ERROR) logs={"signature verification failed","Installation aborted."};
   DrawInstallPanel(c,m,layout.panel,stage,0.42,true,false,logs,p);
@@ -132,6 +137,12 @@ void Render(const std::string& out,int w,int h,bool zh,int index,bool pixels=fal
   if(stage==InstallStage::VERIFYING || stage==InstallStage::INSTALLING) assert(c.Has("42%"));
   else assert(!c.Has("42%"));
   assert(c.Has("100%")== (stage==InstallStage::SUCCESS));
+  if(detailed && w==1220 && h==2712 && stage==InstallStage::INSTALLING) {
+    assert(c.Has("Opening partition system_a") && c.Has("Finalizing update..."));
+    assert(std::count_if(c.runs.begin(),c.runs.end(),[](const auto& r) {
+      return r.text.find("partition")!=std::string::npos;
+    })>=3);
+  }
   if(rows) {
     assert(layout.menu_y>=layout.panel.y+layout.panel.h);
     assert(VisibleCount(bottom-layout.menu_y,m.row_height,m.gap)>=rows);
@@ -149,8 +160,7 @@ void CheckProgress() {
   for(double value:{-1.0,0.0,0.42,1.0,5.0,std::numeric_limits<double>::quiet_NaN()}) {
     PixelCanvas c(360,800);
     DrawInstallPanel(c,m,{24,24,312,188},InstallStage::INSTALLING,value,true,false,{},p);
-    int expected=std::isfinite(value)?static_cast<int>(std::clamp(value,0.0,1.0)*100):0;
-    assert(c.Has(std::to_string(expected)+"%"));
+    assert(c.Has(InstallPercent(value)));
   }
   PixelCanvas unknown(360,800);
   DrawInstallPanel(unknown,m,{24,24,312,188},InstallStage::INSTALLING,0.9,false,true,{},p);
@@ -158,7 +168,7 @@ void CheckProgress() {
   assert(std::string(InstallTitle(InstallStage::INSTALLING,true))=="Installing security update");
   for(auto stage:{InstallStage::ERROR,InstallStage::SUCCESS,InstallStage::CANCELLED}) {
     PixelCanvas c(360,800);DrawInstallPanel(c,m,{24,24,312,188},stage,0.42,true,false,{},p);
-    auto expected=stage==InstallStage::ERROR?p.error:stage==InstallStage::SUCCESS?p.alert_success:p.alert_warning;
+    auto expected=p.text; // Status titles use the common text color; the bar uses the accent.
     assert(c.runs[0].color.r==expected.r && c.runs[0].color.g==expected.g && c.runs[0].color.b==expected.b);
   }
   for(auto stage:{InstallStage::FLASH_PREPARING,InstallStage::FLASH_WRITING,
@@ -170,7 +180,7 @@ void CheckProgress() {
     assert(c.runs[0].text.rfind(std::string(InstallTitle(stage,false)).substr(0,8),0)==0);
     assert(c.Has("100%")== (stage==InstallStage::FLASH_SUCCESS));
     if(stage==InstallStage::FLASH_WRITING || stage==InstallStage::FLASH_VERIFYING) assert(c.Has("42%"));
-    if(stage==InstallStage::FLASH_ERROR) assert(c.runs[0].color.r==p.error.r);
+    if(stage==InstallStage::FLASH_ERROR) assert(c.runs[0].color.r==p.text.r);
     assert(!c.Has("adb sideload <filename>"));
   }
 }

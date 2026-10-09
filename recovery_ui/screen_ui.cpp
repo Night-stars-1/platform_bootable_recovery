@@ -615,6 +615,8 @@ ScreenRecoveryUI::ScreenRecoveryUI()
       progressScopeStart(0),
       progressScopeSize(0),
       progress(0),
+      progressScopeTime(0),
+      progressScopeDuration(0),
       pagesIdentical(false),
       text_cols_(0),
       text_rows_(0),
@@ -1801,7 +1803,9 @@ void ScreenRecoveryUI::DrawInstallPageLocked() {
       menu_ && menu_->selection() == -1, title_lines_, palette,
       recovery_ui::IsFlashStage(m3e_install_stage_) ? "Flash partition image" : "Install update");
   auto layout = recovery_m3e::InstallationLayout(m, y, bottom, rows,
-      gr_get_width(m3e_logo_.get()), gr_get_height(m3e_logo_.get()));
+      gr_get_width(m3e_logo_.get()), gr_get_height(m3e_logo_.get()),
+      m3e_install_stage_ == InstallStage::VERIFYING ||
+      m3e_install_stage_ == InstallStage::INSTALLING);
   if (layout.logo.w > 0) {
     DrawSurface(m3e_logo_.get(), 0, 0, layout.logo.w, layout.logo.h,
         layout.logo.x, layout.logo.y);
@@ -1827,6 +1831,7 @@ void ScreenRecoveryUI::SetProgressType(ProgressType type) {
   progressScopeStart = 0;
   progressScopeSize = 0;
   progress = 0;
+  progressScopeDuration = 0;
   update_progress_locked();
 }
 
@@ -1843,14 +1848,19 @@ void ScreenRecoveryUI::ShowProgress(float portion, float seconds) {
 
 void ScreenRecoveryUI::SetProgress(float fraction) {
   std::lock_guard<std::mutex> lg(updateMutex);
+  if (!std::isfinite(fraction)) return;
   if (fraction < 0.0) fraction = 0.0;
   if (fraction > 1.0) fraction = 1.0;
   if (progressBarType == DETERMINATE && fraction > progress) {
     // Skip updates that aren't visibly different.
-    int width = gr_get_width(progress_bar_empty_.get());
+    int width = IsInstallPageLocked() ? ScreenWidth() : gr_get_width(progress_bar_empty_.get());
     float scale = width * progressScopeSize;
-    if ((int)(progress * scale) != (int)(fraction * scale)) {
-      progress = fraction;
+    bool redraw = (int)(progress * scale) != (int)(fraction * scale) ||
+        (int)((progressScopeStart + progress * progressScopeSize) * 1000) !=
+        (int)((progressScopeStart + fraction * progressScopeSize) * 1000);
+    // Always retain the reported value, including changes smaller than one pixel.
+    progress = fraction;
+    if (redraw) {
       update_progress_locked();
     }
   }
@@ -1875,7 +1885,7 @@ void ScreenRecoveryUI::PrintV(const char* fmt, bool copy_to_stdout, va_list ap) 
     for (const auto& line : android::base::Split(str, "\n")) {
       if (!line.empty()) m3e_install_logs_.push_back(line);
     }
-    size_t retained = m3e_adb_sideload_ ? 128 : 3;
+    size_t retained = 128;
     if (m3e_install_logs_.size() > retained) {
       m3e_install_logs_.erase(m3e_install_logs_.begin(), m3e_install_logs_.end() - retained);
     }

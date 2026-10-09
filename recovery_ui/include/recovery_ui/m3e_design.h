@@ -4,6 +4,7 @@
  */
 #pragma once
 #include "m3e.h"
+#include "m3e_install.h"
 #include "install_status.h"
 
 namespace recovery_m3e::design {
@@ -217,7 +218,7 @@ inline void Adb(Canvas& c,int width,int height,bool waiting,double fraction,bool
       Label(c,m,inset+pad,ty+Dp(width,24),w-2*pad,"package.zip",Font::Code,text,true);
     }
     int percent_y=panel.y+panel.h-Dp(width,51);
-    Label(c,m,inset+pad,percent_y,w-2*pad,determinate?std::to_string(static_cast<int>(value*100))+"%":"...",
+    Label(c,m,inset+pad,percent_y,w-2*pad,determinate?InstallPercent(value):"...",
       Font::DesignHeading,text);
     Rect bar{inset+pad,panel.y+panel.h-Dp(width,22),w-2*pad,Dp(width,12)};
     Rounded(c,bar,bar.h/2,track);
