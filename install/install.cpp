@@ -520,12 +520,14 @@ static InstallResult TryUpdateBinary(Package* package, bool* wipe_cache,
     PLOG(ERROR) << "Failed to create pipe for updater output";
     return INSTALL_ERROR;
   }
-  std::unique_ptr<FILE, decltype(&fclose)> updater_output(fdopen(output_read.get(), "r"), fclose);
+  // Transfer ownership before fdopen adopts the descriptor; recover it on failure.
+  const int output_fd = output_read.release();
+  std::unique_ptr<FILE, decltype(&fclose)> updater_output(fdopen(output_fd, "r"), fclose);
   if (!updater_output) {
+    output_read.reset(output_fd);
     PLOG(ERROR) << "Failed to open updater output";
     return INSTALL_ERROR;
   }
-  output_read.release();  // Owned by updater_output from this point.
 
   pid_t pid = fork();
   if (pid == -1) {
