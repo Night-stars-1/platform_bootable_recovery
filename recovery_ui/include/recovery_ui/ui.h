@@ -254,6 +254,10 @@ class RecoveryUI {
   // being pressed in the meantime), CheckKey will be called with 'is_long_press' true.
   virtual void KeyLongPress(int key);
 
+  // Called on the input thread when Power and Volume Down are held together, regardless of press
+  // order. Both key releases are consumed, so the chord never reaches CheckKey().
+  virtual void TakeScreenshot() {}
+
   // Normally in recovery there's a key sequence that triggers immediate reboot of the device,
   // regardless of what recovery is doing (with the default CheckKey implementation, it's pressing
   // the power button 7 times in row). Call this to enable or disable that feature. It is enabled by

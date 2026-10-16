@@ -2339,6 +2339,39 @@ void ScreenRecoveryUI::KeyLongPress(int) {
   Redraw();
 }
 
+void ScreenRecoveryUI::TakeScreenshot() {
+  if (!is_graphics_available) return;
+  char path[64];
+  const time_t now = time(nullptr);
+  struct tm local {};
+  strftime(path, sizeof(path), "/tmp/Screenshot_%Y-%m-%d-%H-%M-%S.png", localtime_r(&now, &local));
+
+  bool saved = false;
+  {
+    std::lock_guard<std::mutex> lg(updateMutex);
+    // Never capture credential entry. A held transition frame is not what draw_screen_locked()
+    // would render, so skip it rather than save a different image.
+    if (pattern_input_ || password_input_ || ShouldHoldMenuFrameLocked()) return;
+    // Flip() hands back the stale buffer on double-buffered backends, so render the visible
+    // frame again before saving it.
+    draw_screen_locked();
+    saved = gr_save_screenshot(path) == 0;
+    if (saved) {
+      // Blink to notify that the screenshot was taken.
+      gr_color(255, 255, 255, 255);
+      gr_fill(0, 0, gr_fb_width(), gr_fb_height());
+      gr_flip();
+    }
+    update_screen_locked();
+  }
+  // Print() takes updateMutex itself.
+  if (saved) {
+    Print("Screenshot was saved to %s\n", path);
+  } else {
+    Print("Failed to take a screenshot!\n");
+  }
+}
+
 void ScreenRecoveryUI::SetLocale(const std::string& new_locale) {
   locale_ = new_locale;
   rtl_locale_ = false;

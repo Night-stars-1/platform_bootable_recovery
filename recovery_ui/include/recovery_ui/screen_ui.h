@@ -363,6 +363,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   void SetTitle(const std::vector<std::string>& lines) override;
 
   void KeyLongPress(int) override;
+  void TakeScreenshot() override;
 
   void Redraw();
 

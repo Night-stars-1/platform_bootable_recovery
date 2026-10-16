@@ -506,6 +506,7 @@ int RecoveryUI::OnInputEvent(int fd, uint32_t epevents) {
 void RecoveryUI::ProcessKey(int key_code, int updown) {
   bool register_key = false;
   bool long_press = false;
+  bool screenshot = false;
 
   {
     std::lock_guard<std::mutex> lg(key_press_mutex);
@@ -514,8 +515,17 @@ void RecoveryUI::ProcessKey(int key_code, int updown) {
       ++key_down_count;
       key_last_down = key_code;
       key_long_press = false;
-      std::thread time_key_thread(&RecoveryUI::TimeKey, this, key_code, key_down_count);
-      time_key_thread.detach();
+      if ((key_code == KEY_POWER || key_code == KEY_VOLUMEDOWN) && key_pressed[KEY_POWER] &&
+          key_pressed[KEY_VOLUMEDOWN]) {
+        // Fire on the chord's second key-down (not autorepeat). Clearing key_last_down consumes
+        // both releases, so neither key selects a menu item, toggles the display or counts
+        // toward reboot.
+        key_last_down = -1;
+        screenshot = updown == 1;
+      } else {
+        std::thread time_key_thread(&RecoveryUI::TimeKey, this, key_code, key_down_count);
+        time_key_thread.detach();
+      }
     } else {
       if (key_last_down == key_code) {
         long_press = key_long_press;
@@ -523,6 +533,11 @@ void RecoveryUI::ProcessKey(int key_code, int updown) {
       }
       key_last_down = -1;
     }
+  }
+
+  if (screenshot) {
+    TakeScreenshot();
+    return;
   }
 
   bool reboot_enabled = enable_reboot;

@@ -133,6 +133,8 @@ int gr_overscan_offset_y();
 GRRotation gr_touch_rotation();
 
 void gr_flip();
+// Writes the current draw buffer as an RGB PNG. Draw the frame first; call before gr_flip().
+int gr_save_screenshot(const char* dest);
 void gr_fb_blank(bool blank);
 void gr_fb_blank(bool blank, int index);
 bool gr_has_multiple_connectors();

@@ -16,10 +16,12 @@
 
 #include "graphics.h"
 
+#include <png.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <memory>
 
@@ -392,6 +394,48 @@ int gr_init_font(const char* name, GRFont** dest) {
 
 void gr_flip() {
   gr_draw = gr_backend->Flip();
+}
+
+int gr_save_screenshot(const char* dest) {
+  if (gr_draw == nullptr || gr_draw->pixel_bytes != 4) return -1;
+  FILE* fp = fopen(dest, "wbe");
+  if (fp == nullptr) return -1;
+
+  volatile int res = -1;
+  png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+  png_infop info = png ? png_create_info_struct(png) : nullptr;
+  if (info != nullptr && setjmp(png_jmpbuf(png)) == 0) {
+    png_init_io(png, fp);
+    png_set_IHDR(png, info, gr_draw->width, gr_draw->height, 8, PNG_COLOR_TYPE_RGB,
+                 PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
+    png_write_info(png, info);
+    // Feed 4-byte pixels and let libpng drop the unused byte. The byte order is the inverse of
+    // gr_color()'s packing.
+    switch (pixel_format) {
+      case PixelFormat::ARGB:
+      case PixelFormat::BGRA:
+      case PixelFormat::BGRX:  // B, G, R, X
+        png_set_bgr(png);
+        png_set_filler(png, 0, PNG_FILLER_AFTER);
+        break;
+      case PixelFormat::RGBA:  // X, R, G, B
+        png_set_filler(png, 0, PNG_FILLER_BEFORE);
+        break;
+      default:  // ABGR, RGBX, UNKNOWN: R, G, B, X
+        png_set_filler(png, 0, PNG_FILLER_AFTER);
+        break;
+    }
+    const uint8_t* row = gr_draw->data();
+    for (size_t y = 0; y < gr_draw->height; ++y, row += gr_draw->row_bytes) {
+      png_write_row(png, row);
+    }
+    png_write_end(png, nullptr);
+    res = 0;
+  }
+  png_destroy_write_struct(&png, &info);
+  if (fclose(fp) != 0) res = -1;
+  if (res != 0) unlink(dest);
+  return res;
 }
 
 std::unique_ptr<MinuiBackend> create_backend(GraphicsBackend backend) {
