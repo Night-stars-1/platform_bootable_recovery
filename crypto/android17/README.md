@@ -689,45 +689,14 @@ bridge's `enabled` flag. Their installation is selected by the product condition
 here. Keep device-specific modules and their side effects within that device's
 enable condition.
 
-## 10. Prepare platform dependencies and key-read patches
+## 10. Platform dependencies and key access
 
-Enter the Android source root first. Replace `/path/to/android` below with the
-actual path. Run each command separately and stop on failure before compiling.
-
-Preview:
-
-```bash
-python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android
-```
-
-Apply:
-
-```bash
-python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android --apply
-```
-
-Check:
-
-```bash
-python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android --check
-```
-
-The helper adds AIDL, analyzer, and SQLite Recovery dependency declarations
-and checks/applies explicit `system/sepolicy` patches. It does not generate
-device HAL configuration, deploy vendor libraries, enable a device, compile,
-or flash. It does not require a source hash manifest or deployment record JSON.
-
-After a platform upgrade, maintainers must confirm that SP, vold, and keystore2
-formats still match the backend implementation. Resolve dependency declaration
-or policy patch conflicts against the actual source; the script does not
-overwrite unknown changes.
-
-These changes belong to `hardware/interfaces`, `system/tools/aidl`,
-`external/sqlite`, and `system/sepolicy`. When maintaining a distribution,
-commit them to the corresponding forks and track them in the manifest, or
-review and reapply them after syncing those projects. See the
-[key-access patch](../../tools/crypto/patches/android17-recovery-key-access.patch)
-for its scope.
+Sync the distribution's `hardware/interfaces`, `system/tools/aidl`,
+`external/sqlite`, and `system/sepolicy` forks alongside Recovery. These own
+the Recovery dependency declarations and opt-in key-read policy; Recovery no
+longer applies patches to other source projects. Device integration must select
+the policy and modules explicitly. After a platform upgrade, confirm that SP,
+vold, and keystore2 formats still match this backend.
 
 ## 11. Checks before building and after image packaging
 
@@ -807,6 +776,14 @@ key/state missing, 4 key upgrade required, 5 credential rejected, 6 hardware
 throttling, and 7 other I/O, format, or cryptographic errors.
 `source=none code=0` is not a success marker. See the
 [diagnostic stage definitions](diagnostic.h) for the complete substages.
+
+An unsecured user normally has no current-protector `.pwd` file and may have no legacy
+`lockscreen.password_type` database row. Only a successful query with no row for that
+user defaults to Android's `PASSWORD_QUALITY_UNSPECIFIED` value, zero. Unreadable or
+corrupt databases, query failures, and malformed or duplicate rows still fail; explicit
+nonzero values are preserved. Protector-id, SP-blob, KeyMint and CE checks are unchanged.
+The default-value fix has passed a before/after run of the actual C++/SQLite reader in
+an isolated filesystem; this is not end-to-end device validation of CE unlocking.
 
 Continue diagnosis using the available init, kernel, SELinux AVC, and vendor
 service logs. Diagnostics do not depend on logcat. Do not log PINs, patterns,

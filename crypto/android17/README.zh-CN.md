@@ -618,39 +618,12 @@ include 加进所有设备共用的 Recovery 产品配置。
 前面的四个普通 `prebuilt_etc` 没有继承认证桥的 `enabled` 开关，它们由这里的
 产品条件决定是否安装。保持设备专用模块及其副作用均在该设备的启用条件内。
 
-## 10. 准备平台依赖和密钥读取补丁
+## 10. 平台依赖和密钥读取
 
-先进入 Android 源码根目录；下面的 `/path/to/android` 必须替换为实际路径。
-每条命令单独运行，失败后停止，不继续编译。
-
-预览：
-
-```bash
-python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android
-```
-
-应用：
-
-```bash
-python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android --apply
-```
-
-检查：
-
-```bash
-python3 bootable/recovery/tools/crypto/prepare_android17.py /path/to/android --check
-```
-
-helper 补充 AIDL、analyzer 和 SQLite Recovery 依赖声明，并检查/应用明确的
-`system/sepolicy` 补丁。它不生成设备 HAL 配置、不部署厂商库、不启用设备，
-也不编译或刷机。脚本不要求创建源码哈希清单或部署记录 JSON。
-
-平台升级后，维护者应确认 SP、vold、keystore2 的格式与后端实现仍匹配。
-依赖声明或策略补丁冲突时，需要按实际源码调整，脚本不会覆盖未知改动。
-
-这些改动分别属于 `hardware/interfaces`、`system/tools/aidl`、`external/sqlite`
-和 `system/sepolicy`。维护发行版时提交到相应 fork，并由 manifest 跟踪；
-或在同步这些项目后重新审查和应用。具体补丁范围见 [密钥访问补丁](../../tools/crypto/patches/android17-recovery-key-access.patch)。
+同步发行版的 `hardware/interfaces`、`system/tools/aidl`、`external/sqlite`
+和 `system/sepolicy` fork，它们维护 Recovery 依赖声明和按需启用的密钥读取
+策略；Recovery 不再修改其他源码仓库。设备集成必须显式选择策略和模块。
+平台升级后，应确认 SP、vold、keystore2 的格式仍与后端实现匹配。
 
 ## 11. 编译前和镜像打包后检查什么
 
@@ -719,6 +692,14 @@ adb -d pull /tmp/recovery.log recovery-decrypt.log
 `result=0` 为成功，1 不支持，2 服务不可用，3 已有密钥/状态缺失，4 需升级密钥，
 5 凭据拒绝，6 硬件限流，7 其他 I/O/格式/密码学错误。`source=none code=0` 不是
 成功标记。完整子阶段含义见 [诊断阶段定义](diagnostic.h)。
+
+无锁屏用户通常没有当前 protector 的 `.pwd` 文件，也可能没有旧的
+`lockscreen.password_type` 数据库记录。后端只在查询成功且该用户记录不存在时，
+按 Android 的 `PASSWORD_QUALITY_UNSPECIFIED` 默认值 `0` 处理；数据库不可读、
+损坏、查询失败或记录非法/重复仍然拒绝，显式非零值不改写。`sp-handle`、
+SP blob、protector 密钥及后续 CE 解锁检查均保持不变，不因缺少密码而跳过。
+该默认值分支已用实际 C++/SQLite 在隔离文件系统中完成修复前后对照；
+这不代表新版 Recovery 的无锁屏 CE 解锁已经过真机端到端验证。
 
 按实际设备能收集到的 init、内核、SELinux AVC 和厂商服务日志继续定位；诊断
 不依赖 logcat。不要在日志加入 PIN、图案、密钥或认证令牌，也不自动反复尝试

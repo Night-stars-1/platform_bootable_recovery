@@ -22,24 +22,11 @@ MTP itself never mounts userdata or authenticates from a host request.
 1. Supply a working crypto adapter that installs CE keys for user 0. The daemon
    independently calls `VerifyUserStorage(0)`; a previous success property or
    visible directory alone is insufficient. Without keys, MTP stays disabled.
-2. Prepare the owning platform projects from the synced Recovery fork:
-
-   ```bash
-   python3 bootable/recovery/tools/mtp/prepare_platform.py /path/to/android
-   python3 bootable/recovery/tools/mtp/prepare_platform.py /path/to/android --apply
-   python3 bootable/recovery/tools/mtp/prepare_platform.py /path/to/android --check
-   ```
-
-   The default command previews. Explicit reviewed Git patches add a private,
-   opt-in transport in `frameworks/av/media/mtp`, preserving normal `libmtp`
-   behavior. No AOSP transport source is copied into the Recovery fork.
-   Narrow Recovery policy additions permit the existing USB configuration
-   properties, stopping this service and the specific FunctionFS ioctls.
-   A device-gated media_rw_data_file write exception is added to the Recovery
-   neverallows. Key/keystore/credential write bans and all data execution bans
-   remain. Normal Android and non-opt-in Recovery retain their restrictions.
-   Conflicts and modified/partial deployments are refused; backups live outside
-   the source tree. Reapply/check after syncing the owning platform projects.
+2. Sync the distribution's `frameworks/av` and `system/sepolicy` forks.
+   They provide the private opt-in transport and Recovery policy respectively;
+   normal `libmtp` behavior and non-opt-in policy remain unchanged. The
+   device-gated media write exception does not lift key, credential, or data
+   execution bans.
 3. In the device product:
 
    ```make
@@ -62,9 +49,7 @@ MTP itself never mounts userdata or authenticates from a host request.
    `ffs.mtp` + `ffs.adb`, matching the existing Recovery layout. Devices with
    different gadget layouts need their own init adapter. Only one configuration
    is exposed; the MTP interface comes first for Windows OS descriptors.
-5. Keep all profile files/product includes in the device tree. Neither the
-   deployment helper nor the device adapter edits `bootable/recovery`, so
-   `repo sync -c bootable/recovery` can update the generic implementation.
+5. Keep all profile files and product includes in the device tree.
 
 ## Lifecycle and limits
 
@@ -91,12 +76,6 @@ MTP itself never mounts userdata or authenticates from a host request.
 
 ## Validation
 
-`python3 bootable/recovery/tools/mtp/test_prepare_platform.py` exercises actual
-Git patch application, idempotence, conflicts, partial deployments, preservation
-of unrelated changes, exact read-only-profile upgrades, source races and path
-containment. On Linux it also checks m4 quoting and opt-in policy expansion.
-It does not run a compiler.
-
 `recovery_mtp_database_test` is a normal Android native test (not a Recovery/gtest
 variant). Its source covers nested/Unicode enumeration, symlink/special-node
 exclusion, replaced inodes, pinned transfers, 64-bit sizes, bounds and mutation
@@ -106,7 +85,6 @@ tests are source only: maintainers must build/run them themselves.
 
 Android compilation, SELinux policy compilation, USB enumeration, disconnect/
 reconnect, sideload handover, Windows upload/download/delete/rename and device decryption have not
-been validated for this change. Source parsing and Python deployment tests are
-not proof of those runtime properties. Check `sys.usb.config`, `sys.usb.state`,
+been validated for this change. Source-level checks are not proof of those runtime properties. Check `sys.usb.config`, `sys.usb.state`,
 `sys.usb.ffs.mtp.ready`, `init.svc.recovery-mtp`, Recovery logs and SELinux denials
 on a real device without collecting lock credentials or keys.
