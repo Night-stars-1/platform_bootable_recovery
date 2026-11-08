@@ -129,9 +129,15 @@ bool ReadPasswordQuality(uint32_t user, int64_t* quality) {
   if (!db.Open("/data/system/locksettings.db")) return false;
   auto q = Query(db.get(),
                  "SELECT value FROM locksettings WHERE name='lockscreen.password_type' AND user=?");
-  if (!q || sqlite3_bind_int64(q.get(), 1, user) != SQLITE_OK ||
-      sqlite3_step(q.get()) != SQLITE_ROW)
-    return false;
+  if (!q || sqlite3_bind_int64(q.get(), 1, user) != SQLITE_OK) return false;
+  const int step = sqlite3_step(q.get());
+  if (step == SQLITE_DONE) {
+    // Android defaults the legacy PASSWORD_TYPE_KEY to PASSWORD_QUALITY_UNSPECIFIED.
+    // New no-LSKF protectors normally have neither this setting nor a .pwd file.
+    *quality = 0;
+    return true;
+  }
+  if (step != SQLITE_ROW) return false;
   const char* value = reinterpret_cast<const char*>(sqlite3_column_text(q.get(), 0));
   int length = sqlite3_column_bytes(q.get(), 0);
   if (!value || length < 1 || length > 10) return false;

@@ -24,6 +24,8 @@ class Snapshot final {
 using Statement = std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>;
 Statement Query(sqlite3* db, const char* sql);
 bool ReadProtectorId(uint32_t user, uint64_t* id);
+// Only an absent legacy password-quality setting defaults to 0, as on Android.
+// An unreadable database or malformed/ambiguous setting still fails.
 bool ReadPasswordQuality(uint32_t user, int64_t* quality);
 // Only an absent setting defaults to 3. Malformed/unsupported settings fail.
 bool ReadPatternSizeFromDatabase(sqlite3* db, uint32_t user, uint32_t* size);
